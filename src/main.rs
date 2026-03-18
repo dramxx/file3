@@ -1,5 +1,7 @@
 mod app;
 mod fs;
+mod git;
+mod syntax;
 mod ui;
 
 use anyhow::Result;
@@ -51,22 +53,17 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut app::
             }
 
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q')
-                    if key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                {
-                    app.running = false;
-                    break;
-                }
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
                     app.running = false;
                     break;
                 }
+                KeyCode::Char('d') | KeyCode::Char('D') => app.toggle_diff(),
                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                 KeyCode::Enter => app.enter(),
                 KeyCode::Backspace => app.go_up(),
                 KeyCode::PageUp | KeyCode::Char('u') => app.scroll_up(),
-                KeyCode::PageDown | KeyCode::Char('d') => {
+                KeyCode::PageDown => {
                     let height = terminal.size()?.height;
                     app.scroll_down(height);
                 }
