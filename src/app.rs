@@ -37,17 +37,10 @@ impl App {
             .map(|root| git::git_dirty_files(root))
             .unwrap_or_default();
 
-        let file_content = entries.iter().find(|e| !e.is_dir).and_then(|e| {
-            if git_root
-                .as_ref()
-                .map(|root| git::git_dirty_files(root).contains(&e.path))
-                .unwrap_or(false)
-            {
-                None
-            } else {
-                fs::read_file(&e.path)
-            }
-        });
+        let file_content = entries
+            .iter()
+            .find(|e| !e.is_dir)
+            .and_then(|e| fs::read_file(&e.path));
 
         Self {
             current_dir,
@@ -122,7 +115,7 @@ impl App {
             return;
         }
 
-        let entry = self.selected_entry().cloned();
+        let entry = self.selected_entry_cloned();
         if let Some(entry) = entry {
             if entry.is_dir {
                 return;
@@ -196,7 +189,20 @@ impl App {
     }
 
     pub fn selected_entry(&self) -> Option<&DirEntry> {
-        self.entries.get(self.selected)
+        if self.selected_is_parent() {
+            None
+        } else {
+            let index = if self.is_at_root() {
+                self.selected
+            } else {
+                self.selected.saturating_sub(1)
+            };
+            self.entries.get(index)
+        }
+    }
+
+    fn selected_entry_cloned(&self) -> Option<DirEntry> {
+        self.selected_entry().cloned()
     }
 
     pub fn is_at_root(&self) -> bool {

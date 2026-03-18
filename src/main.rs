@@ -61,7 +61,6 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut app::
                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                 KeyCode::Enter => app.enter(),
-                KeyCode::Backspace => app.go_up(),
                 KeyCode::PageUp | KeyCode::Char('u') => app.scroll_up(),
                 KeyCode::PageDown => {
                     let height = terminal.size()?.height;

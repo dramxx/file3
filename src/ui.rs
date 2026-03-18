@@ -211,23 +211,14 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
             }
         }
         ViewMode::Content => {
-            if let Some(entry) = app.selected_entry() {
-                if entry.is_dir {
-                    return;
-                }
-                if let Some(ref content) = app.file_content {
+            if let Some(ref content) = app.file_content {
+                if let Some(entry) = app.selected_entry() {
                     Paragraph::new(highlight_code(content, &entry.name))
                 } else {
-                    Paragraph::new(
-                        Line::from(Span::raw("[binary file or too large]"))
-                            .style(Style::default().fg(TEXT_DIM)),
-                    )
+                    Paragraph::new(Line::from(Span::raw(content)).style(Style::default().fg(TEXT)))
                 }
             } else {
-                Paragraph::new(
-                    Line::from(Span::raw("  Select a file to preview"))
-                        .style(Style::default().fg(TEXT_DIM)),
-                )
+                Paragraph::new(Line::from(Span::raw("  ")).style(Style::default().fg(TEXT)))
             }
         }
     };
@@ -271,16 +262,10 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
             ("q", "quit"),
             ("↑↓", "navigate"),
             ("↵", "open"),
-            ("⌫", "up"),
             ("d", "diff"),
         ]
     } else {
-        vec![
-            ("q", "quit"),
-            ("↑↓", "navigate"),
-            ("↵", "open"),
-            ("⌫", "up"),
-        ]
+        vec![("q", "quit"), ("↑↓", "navigate"), ("↵", "open")]
     };
 
     let items: Vec<Span> = key_hints
