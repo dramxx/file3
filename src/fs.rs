@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FILE_SIZE: u64 = 1_048_576;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DirEntry {
     pub name: String,
     pub path: PathBuf,

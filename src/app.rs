@@ -65,21 +65,32 @@ impl App {
     }
 
     pub fn move_up(&mut self) {
-        if !self.entries.is_empty() && self.selected > 0 {
+        if self.selected > 0 {
             self.selected -= 1;
             self.load_selection();
         }
     }
 
     pub fn move_down(&mut self) {
-        if self.selected < self.entries.len().saturating_sub(1) {
+        let total_items = self.entries.len() + if self.is_at_root() { 0 } else { 1 };
+        if self.selected < total_items - 1 {
             self.selected += 1;
             self.load_selection();
         }
     }
 
     pub fn enter(&mut self) {
-        if let Some(entry) = self.entries.get(self.selected) {
+        if self.selected_is_parent() {
+            self.go_up();
+            return;
+        }
+
+        let entry_index = if self.is_at_root() {
+            self.selected
+        } else {
+            self.selected - 1
+        };
+        if let Some(entry) = self.entries.get(entry_index) {
             if entry.is_dir {
                 self.current_dir = entry.path.clone();
                 self.entries = fs::read_dir(&self.current_dir);
@@ -152,7 +163,17 @@ impl App {
         self.view_mode = ViewMode::Content;
         self.diff_content = None;
 
-        if let Some(entry) = self.entries.get(self.selected) {
+        if self.selected_is_parent() {
+            self.file_content = None;
+            return;
+        }
+
+        let entry_index = if self.is_at_root() {
+            self.selected
+        } else {
+            self.selected - 1
+        };
+        if let Some(entry) = self.entries.get(entry_index) {
             self.file_content = if entry.is_dir {
                 None
             } else {
@@ -176,6 +197,14 @@ impl App {
 
     pub fn selected_entry(&self) -> Option<&DirEntry> {
         self.entries.get(self.selected)
+    }
+
+    pub fn is_at_root(&self) -> bool {
+        self.current_dir.parent().is_none()
+    }
+
+    pub fn selected_is_parent(&self) -> bool {
+        self.selected == 0 && !self.is_at_root()
     }
 
     pub fn is_dirty(&self, path: &PathBuf) -> bool {
