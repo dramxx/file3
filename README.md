@@ -5,38 +5,34 @@ A fast, terminal-based file explorer with syntax highlighting and git diff suppo
 ## Install
 
 ```bash
-# Clone or download the project, then:
-cargo build --release
+# Install once (makes file3 available globally)
+cargo install --path .
 
-# Run directly
+# Run
+file3
+
+# Or run without installing
 cargo run
-
-# Or use the compiled binary
-./target/release/file3
 ```
 
 ## Features
 
 **File Navigation**
-
 - Browse directories with arrow keys or `j`/`k`
 - Enter directories with `Enter`
-- Go up a level with `Backspace`
+- Navigate up with `..` row or `Backspace`
 - Two-panel layout: file list on left, preview on right
 
 **Syntax Highlighting**
-
 - Automatic syntax highlighting for 100+ languages
 - Supports Rust, JavaScript, TypeScript, Python, Go, and more
 
 **Git Integration** (when in a git repository)
-
-- Modified files marked with `~` in yellow
+- Modified files marked with `●` in yellow
 - Press `d` to toggle between file content and git diff view
 - Diffs show additions in green, deletions in red, and hunk headers in cyan
 
 **Scrolling**
-
 - PageUp/PageDown to scroll through file content
 - Works in both content and diff view
 
@@ -48,6 +44,7 @@ cargo run
 | `↑` / `k`      | Move selection up                     |
 | `↓` / `j`      | Move selection down                   |
 | `Enter`        | Open directory / enter folder         |
+| `..` + Enter   | Go up one directory                  |
 | `PageUp` / `u` | Scroll content up                     |
 | `PageDown`     | Scroll content down                   |
 | `d`            | Toggle git diff view (git repos only) |
@@ -62,5 +59,5 @@ cargo run
 
 - The app starts in your current working directory
 - Files larger than 1MB are not loaded to prevent memory issues
-- Binary files are detected and shown as `[binary file or too large]`
+- Binary files (images, PDFs, EXEs, etc.) show empty preview
 - Hidden files (starting with `.`) are hidden by default
