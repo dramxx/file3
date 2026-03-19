@@ -55,7 +55,7 @@ fn syntect_color_to_ratatui(s: &SyntectStyle) -> Color {
     Color::Rgb(s.foreground.r, s.foreground.g, s.foreground.b)
 }
 
-const MAX_LINE_WIDTH: usize = 500;
+const MAX_LINE_WIDTH: usize = 400;
 
 pub fn highlight_code(code: &str, file_path: &str) -> Text<'static> {
     let syntax_set = get_syntax_set();

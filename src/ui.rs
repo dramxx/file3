@@ -267,7 +267,8 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
         .borders(Borders::ALL)
         .style(Style::default().bg(BG));
 
-    let _inner = content_block.inner(area);
+    let inner = content_block.inner(area);
+    let wrap_width = ((inner.width.saturating_sub(2)) as f32 * 0.8) as usize;
     let paragraph = match app.view_mode {
         ViewMode::Diff => {
             let diff = app.diff_content.clone().unwrap_or_default();
@@ -277,7 +278,7 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
                         .style(Style::default().fg(TEXT_DIM)),
                 )
             } else {
-                Paragraph::new(render_diff(&diff))
+                Paragraph::new(render_diff(&diff, wrap_width))
             }
         }
         ViewMode::Content => {
@@ -285,7 +286,9 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
                 if let Some(entry) = app.selected_entry() {
                     Paragraph::new(highlight_code(content, &entry.name))
                 } else {
-                    Paragraph::new(Line::from(Span::raw(content)).style(Style::default().fg(TEXT)))
+                    Paragraph::new(
+                        wrap_text_at_width(content, wrap_width).style(Style::default().fg(TEXT)),
+                    )
                 }
             } else {
                 Paragraph::new(Line::from(Span::raw("  ")).style(Style::default().fg(TEXT)))
@@ -296,7 +299,7 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph.scroll((app.scroll, 0)).block(content_block), area);
 }
 
-fn render_diff(diff: &str) -> Text<'static> {
+fn render_diff(diff: &str, wrap_width: usize) -> Text<'static> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     for line in diff.lines() {
@@ -318,9 +321,40 @@ fn render_diff(diff: &str) -> Text<'static> {
             (Style::default().fg(TEXT_DIM), "")
         };
 
-        lines.push(Line::from(vec![
-            Span::raw(format!("{}{}", prefix, line)).style(style)
-        ]));
+        let full_line = format!("{}{}", prefix, line);
+        if full_line.chars().count() <= wrap_width {
+            lines.push(Line::from(vec![Span::raw(full_line).style(style)]));
+        } else {
+            let chars: Vec<char> = full_line.chars().collect();
+            let mut pos = 0;
+            while pos < chars.len() {
+                let end = std::cmp::min(pos + wrap_width, chars.len());
+                let mut break_pos = end;
+                for i in (pos..end).rev() {
+                    if chars[i].is_whitespace() {
+                        break_pos = i;
+                        break;
+                    }
+                }
+                if break_pos == pos {
+                    break_pos = end;
+                }
+                let wrapped: String = chars[pos..break_pos].iter().collect();
+                lines.push(Line::from(vec![Span::raw(wrapped).style(style)]));
+                pos = if break_pos < chars.len()
+                    && chars[break_pos..].iter().any(|c| !c.is_whitespace())
+                {
+                    let next_start = chars[break_pos..]
+                        .iter()
+                        .position(|c| !c.is_whitespace())
+                        .unwrap_or(0)
+                        + break_pos;
+                    next_start
+                } else {
+                    break;
+                };
+            }
+        }
     }
 
     Text::from(lines)
@@ -377,4 +411,47 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn wrap_text_at_width(text: &str, width: usize) -> Text<'_> {
+    let mut result_lines: Vec<Line<'_>> = Vec::new();
+
+    for line in text.lines() {
+        if line.chars().count() <= width {
+            result_lines.push(Line::from(line));
+        } else {
+            let chars: Vec<char> = line.chars().collect();
+            let mut pos = 0;
+            while pos < chars.len() {
+                let end = std::cmp::min(pos + width, chars.len());
+                let mut break_pos = end;
+
+                for i in (pos..end).rev() {
+                    if chars[i].is_whitespace() {
+                        break_pos = i;
+                        break;
+                    }
+                }
+
+                if break_pos == pos {
+                    break_pos = end;
+                }
+
+                let wrapped: String = chars[pos..break_pos].iter().collect();
+                result_lines.push(Line::from(wrapped));
+                pos = if chars[break_pos..].iter().any(|c| !c.is_whitespace()) {
+                    let next_start = chars[break_pos..]
+                        .iter()
+                        .position(|c| !c.is_whitespace())
+                        .unwrap_or(0)
+                        + break_pos;
+                    next_start
+                } else {
+                    break_pos + 1
+                };
+            }
+        }
+    }
+
+    Text::from(result_lines)
 }
