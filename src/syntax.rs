@@ -94,3 +94,203 @@ pub fn highlight_code(code: &str, file_path: &str) -> Text<'static> {
         style: ratatui::style::Style::default(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_highlight_code_rust() {
+        let code = r#"fn main() {
+    println!("Hello, world!");
+}"#;
+        let result = highlight_code(code, "test.rs");
+
+        assert!(!result.lines.is_empty());
+        assert!(result.lines.len() >= 2);
+    }
+
+    #[test]
+    fn test_highlight_code_empty() {
+        let code = "";
+        let result = highlight_code(code, "test.txt");
+
+        assert!(result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_multiline() {
+        let code = "line1\nline2\nline3";
+        let result = highlight_code(code, "test.txt");
+
+        assert_eq!(result.lines.len(), 3);
+    }
+
+    #[test]
+    fn test_highlight_code_with_tabs() {
+        let code = "fn main() {\n\tprintln!(\"test\");\n}";
+        let result = highlight_code(code, "test.rs");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_with_unicode() {
+        let code = "// Comment with unicode: 世界\nlet x = 42;";
+        let result = highlight_code(code, "test.rs");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_with_special_chars() {
+        let code = "let s = \"hello\\nworld\";\nlet arr = [1, 2, 3];";
+        let result = highlight_code(code, "test.rs");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_plain_text() {
+        let code = "This is plain text content";
+        let result = highlight_code(code, "test.txt");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_no_extension() {
+        let code = "Some code without extension";
+        let result = highlight_code(code, "Makefile");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_long_lines() {
+        let code = format!("let x = \"{}\";", "x".repeat(1000));
+        let result = highlight_code(&code, "test.rs");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_many_lines() {
+        let code: String = (0..100)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = highlight_code(&code, "test.txt");
+
+        assert_eq!(result.lines.len(), 100);
+    }
+
+    #[test]
+    fn test_syntax_set_is_singleton() {
+        let syntax1 = get_syntax_set();
+        let syntax2 = get_syntax_set();
+
+        assert!(std::ptr::eq(syntax1, syntax2));
+    }
+
+    #[test]
+    fn test_theme_set_is_singleton() {
+        let theme1 = get_theme_set();
+        let theme2 = get_theme_set();
+
+        assert!(std::ptr::eq(theme1, theme2));
+    }
+
+    #[test]
+    fn test_theme_set_has_themes() {
+        let theme_set = get_theme_set();
+        assert!(!theme_set.themes.is_empty());
+    }
+
+    #[test]
+    fn test_find_syntax_by_extension() {
+        let syntax_set = get_syntax_set();
+
+        let rust_syntax = find_syntax(syntax_set, "test.rs");
+        assert!(rust_syntax.name.contains("Rust") || rust_syntax.name.contains("rust"));
+    }
+
+    #[test]
+    fn test_find_syntax_plain_text_fallback() {
+        let syntax_set = get_syntax_set();
+
+        let syntax = find_syntax(syntax_set, "file.unknown");
+        assert_eq!(syntax.name, "Plain Text");
+    }
+
+    #[test]
+    fn test_syntax_with_path_separators() {
+        let syntax_set = get_syntax_set();
+
+        let syntax = find_syntax(syntax_set, "/path/to/file.rs");
+        assert!(syntax.name.contains("Rust") || syntax.name.contains("rust"));
+    }
+
+    #[test]
+    fn test_syntax_with_backslash_path() {
+        let syntax_set = get_syntax_set();
+
+        let syntax = find_syntax(syntax_set, "C:\\path\\to\\file.rs");
+        assert!(syntax.name.contains("Rust") || syntax.name.contains("rust"));
+    }
+
+    #[test]
+    fn test_highlight_code_with_crlf() {
+        let code = "line1\r\nline2\r\nline3";
+        let result = highlight_code(code, "test.txt");
+
+        assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_syntect_color_to_ratatui() {
+        use syntect::highlighting::{Color, Style};
+
+        let syntect_style = Style {
+            foreground: Color {
+                r: 255,
+                g: 128,
+                b: 64,
+                a: 255,
+            },
+            background: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            font_style: syntect::highlighting::FontStyle::default(),
+        };
+
+        let color = syntect_color_to_ratatui(&syntect_style);
+
+        match color {
+            ratatui::style::Color::Rgb(r, g, b) => {
+                assert_eq!(r, 255);
+                assert_eq!(g, 128);
+                assert_eq!(b, 64);
+            }
+            _ => panic!("Expected RGB color"),
+        }
+    }
+
+    #[test]
+    fn test_text_struct_creation() {
+        use ratatui::text::Line;
+
+        let lines = vec![Line::from("Line 1"), Line::from("Line 2")];
+
+        let text = Text {
+            lines,
+            alignment: None,
+            style: ratatui::style::Style::default(),
+        };
+
+        assert_eq!(text.lines.len(), 2);
+    }
+}

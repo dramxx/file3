@@ -325,7 +325,14 @@ fn render_diff(diff: &str) -> Text<'static> {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let key_hints: Vec<(&str, &str)> = if app.show_dirty_only {
+    let key_hints: Vec<(&str, &str)> = if app.show_dirty_only && app.is_git_repo {
+        vec![
+            ("q", "quit"),
+            ("↑↓", "navigate"),
+            ("f", "show all"),
+            ("d", "diff"),
+        ]
+    } else if app.show_dirty_only {
         vec![("q", "quit"), ("↑↓", "navigate"), ("f", "show all")]
     } else if app.is_git_repo {
         vec![

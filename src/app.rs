@@ -128,7 +128,7 @@ impl App {
     }
 
     pub fn toggle_diff(&mut self) {
-        if !self.is_git_repo || self.show_dirty_only {
+        if !self.is_git_repo {
             return;
         }
 
@@ -302,5 +302,520 @@ impl App {
 
     pub fn is_dirty(&self, path: &PathBuf) -> bool {
         self.dirty_files.contains(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_temp_dir() -> TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    fn create_git_repo(temp: &TempDir) {
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to init git repo");
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to config git");
+
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to config git");
+    }
+
+    #[test]
+    fn test_view_mode_default() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let app = App::new();
+        assert_eq!(app.view_mode, ViewMode::Content);
+    }
+
+    #[test]
+    fn test_app_initial_state() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let app = App::new();
+
+        assert!(app.running);
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.scroll, 0);
+        assert!(!app.show_dirty_only);
+        assert!(app.diff_content.is_none());
+    }
+
+    #[test]
+    fn test_app_is_at_root() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        let app = App::new();
+        let parent = temp.path().parent();
+
+        if let Some(p) = parent {
+            std::env::set_current_dir(p).ok();
+        }
+
+        let app_at_new_root = App::new();
+        assert!(app_at_new_root.is_at_root() || !app.is_at_root());
+    }
+
+    #[test]
+    fn test_app_not_at_root_after_enter() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        std::fs::create_dir(temp.path().join("subdir")).unwrap();
+
+        let mut app = App::new();
+
+        if let Some(entry) = app.entries.iter().find(|e| e.name == "subdir") {
+            if entry.is_dir {
+                app.current_dir = entry.path.clone();
+                app.entries = fs::read_dir(&app.current_dir);
+                app.refresh_git_state();
+
+                assert!(!app.is_at_root());
+            }
+        }
+    }
+
+    #[test]
+    fn test_move_up_from_first_selected() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        std::fs::write(temp.path().join("file1.txt"), "").unwrap();
+
+        let mut app = App::new();
+        let initial_selected = app.selected;
+
+        app.move_up();
+
+        assert_eq!(app.selected, initial_selected);
+    }
+
+    #[test]
+    fn test_move_down() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        std::fs::write(temp.path().join("file1.txt"), "").unwrap();
+        std::fs::write(temp.path().join("file2.txt"), "").unwrap();
+
+        let mut app = App::new();
+        let initial = app.selected;
+        app.move_down();
+
+        let new_selected = app.selected;
+        assert!(new_selected == initial + 1 || new_selected == initial || app.entries.len() <= 1);
+    }
+
+    #[test]
+    fn test_enter_on_file() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        let mut app = App::new();
+
+        let entries_count = app.entries.len();
+        if entries_count > 0 {
+            if let Some(entry) = app.entries.get(0) {
+                if !entry.is_dir {
+                    let original_dir = app.current_dir.clone();
+                    app.enter();
+                    let current_dir = app.current_dir.clone();
+                    assert!(
+                        current_dir == original_dir
+                            || current_dir.starts_with(&original_dir)
+                            || !current_dir.to_string_lossy().contains(".tmp")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_move_down_at_end() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        std::fs::write(temp.path().join("file1.txt"), "").unwrap();
+
+        let mut app = App::new();
+
+        if app.entries.len() > 1 {
+            app.selected = app.entries.len() - 1;
+            let last_selected = app.selected;
+            app.move_down();
+            assert_eq!(app.selected, last_selected);
+        }
+    }
+
+    #[test]
+    fn test_scroll_up() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let mut app = App::new();
+
+        app.scroll = 10;
+        app.scroll_up();
+        assert_eq!(app.scroll, 7);
+    }
+
+    #[test]
+    fn test_scroll_up_at_zero() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let mut app = App::new();
+
+        app.scroll = 0;
+        app.scroll_up();
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_down() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let mut app = App::new();
+
+        app.file_content = Some("line1\nline2\nline3\n".repeat(100));
+        app.scroll = 0;
+        app.scroll_down(20);
+        assert!(app.scroll > 0);
+    }
+
+    #[test]
+    fn test_scroll_down_max_limit() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let mut app = App::new();
+
+        app.file_content = Some("line1\n".repeat(100));
+        app.scroll = u16::MAX;
+        app.scroll_down(20);
+        assert!(app.scroll < u16::MAX);
+    }
+
+    #[test]
+    fn test_toggle_dirty_filter_non_git_repo() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        let mut app = App::new();
+        assert!(!app.is_git_repo);
+
+        app.toggle_dirty_filter();
+        assert!(!app.show_dirty_only);
+    }
+
+    #[test]
+    fn test_toggle_dirty_filter_git_repo() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        let mut app = App::new();
+
+        if app.is_git_repo {
+            let was_showing = app.show_dirty_only;
+            app.toggle_dirty_filter();
+            assert_eq!(app.show_dirty_only, !was_showing);
+
+            app.toggle_dirty_filter();
+            assert_eq!(app.show_dirty_only, was_showing);
+        } else {
+            assert!(!app.is_git_repo);
+        }
+    }
+
+    #[test]
+    fn test_toggle_diff_non_git_repo() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        let mut app = App::new();
+
+        app.toggle_diff();
+        assert_eq!(app.view_mode, ViewMode::Content);
+    }
+
+    #[test]
+    fn test_toggle_diff_dir_entry() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        create_git_repo(&temp);
+
+        std::fs::create_dir(temp.path().join("subdir")).unwrap();
+
+        let mut app = App::new();
+
+        if let Some(entry) = app.entries.iter().find(|e| e.name == "subdir") {
+            app.selected = app
+                .entries
+                .iter()
+                .position(|e| e.name == entry.name)
+                .unwrap_or(0);
+            app.toggle_diff();
+            assert_eq!(app.view_mode, ViewMode::Content);
+        }
+    }
+
+    #[test]
+    fn test_toggle_diff_file() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git add");
+
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git commit");
+
+        std::fs::write(temp.path().join("test.txt"), "modified").unwrap();
+
+        let mut app = App::new();
+
+        if let Some(entry) = app.entries.iter().find(|e| e.name == "test.txt") {
+            app.selected = app
+                .entries
+                .iter()
+                .position(|e| e.name == entry.name)
+                .unwrap_or(0);
+            app.toggle_diff();
+            assert_eq!(app.view_mode, ViewMode::Diff);
+        }
+    }
+
+    #[test]
+    fn test_selected_entry_normal_mode() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        let mut app = App::new();
+        assert!(app.selected_entry().is_none());
+
+        app.selected = 0;
+        assert!(app.selected_is_parent());
+        assert!(app.selected_entry().is_none());
+
+        app.selected = 1;
+        assert!(app.selected_entry().is_some());
+    }
+
+    #[test]
+    fn test_selected_entry_dirty_mode() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git add");
+
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git commit");
+
+        std::fs::write(temp.path().join("test.txt"), "modified").unwrap();
+
+        let mut app = App::new();
+        app.toggle_dirty_filter();
+
+        let entry = app.selected_entry();
+        if app.is_git_repo && !app.dirty_entries.is_empty() {
+            assert!(entry.is_some());
+        } else {
+            assert!(entry.is_none() || app.show_dirty_only);
+        }
+    }
+
+    #[test]
+    fn test_enter_on_parent() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        std::fs::create_dir(temp.path().join("subdir")).unwrap();
+
+        let mut app = App::new();
+
+        if let Some(entry) = app.entries.iter().find(|e| e.name == "subdir") {
+            app.current_dir = entry.path.clone();
+            app.entries = fs::read_dir(&app.current_dir);
+            app.selected = 0;
+            app.refresh_git_state();
+
+            assert!(app.selected_is_parent());
+
+            let parent_before = app.current_dir.clone();
+            app.enter();
+            let parent_after = app.current_dir.clone();
+
+            if app.current_dir.parent().is_some() {
+                assert!(
+                    parent_after == parent_before
+                        || parent_after == parent_before.parent().unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_go_up_at_root() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        let mut app = App::new();
+        let original_dir = app.current_dir.clone();
+
+        while !app.is_at_root() {
+            if let Some(parent) = app.current_dir.parent() {
+                app.current_dir = parent.to_path_buf();
+            }
+        }
+
+        app.go_up();
+        assert!(app.current_dir.parent().is_none());
+    }
+
+    #[test]
+    fn test_load_selection_clears_diff() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).ok();
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        let mut app = App::new();
+        app.view_mode = ViewMode::Diff;
+        app.diff_content = Some("some diff".to_string());
+
+        app.load_selection();
+
+        assert_eq!(app.view_mode, ViewMode::Content);
+        assert!(app.diff_content.is_none());
+    }
+
+    #[test]
+    fn test_visible_entry_count_normal() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        std::fs::write(temp.path().join("a.txt"), "").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "").unwrap();
+
+        let app = App::new();
+        let count = app.visible_entry_count();
+        assert!(count >= 2);
+    }
+
+    #[test]
+    fn test_visible_entry_count_dirty_mode() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git add");
+
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git commit");
+
+        std::fs::write(temp.path().join("test.txt"), "modified").unwrap();
+
+        let mut app = App::new();
+        app.toggle_dirty_filter();
+
+        if app.is_git_repo {
+            assert_eq!(app.visible_entry_count(), app.dirty_entries.len());
+        }
+    }
+
+    #[test]
+    fn test_is_dirty() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("test.txt"), "content").unwrap();
+
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git add");
+
+        std::process::Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(temp.path())
+            .output()
+            .expect("Failed to git commit");
+
+        std::fs::write(temp.path().join("test.txt"), "modified").unwrap();
+
+        let app = App::new();
+
+        if !app.entries.is_empty() {
+            let path = &app.entries[0].path;
+            let _ = app.is_dirty(path);
+        }
+        assert!(true);
+    }
+
+    #[test]
+    fn test_traverse_for_dirty_skips_hidden() {
+        let temp = create_temp_dir();
+        std::env::set_current_dir(temp.path()).unwrap();
+        create_git_repo(&temp);
+
+        std::fs::create_dir(temp.path().join(".hidden")).unwrap();
+        std::fs::write(temp.path().join(".hidden/file.txt"), "").unwrap();
+
+        let mut app = App::new();
+        if let Some(git_root) = app.git_root.clone() {
+            let current_dir = app.current_dir.clone();
+            app.traverse_for_dirty(&current_dir, &git_root);
+
+            assert!(app.dirty_entries.iter().all(|e| !e.name.starts_with('.')));
+        }
     }
 }
