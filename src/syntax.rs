@@ -55,6 +55,8 @@ fn syntect_color_to_ratatui(s: &SyntectStyle) -> Color {
     Color::Rgb(s.foreground.r, s.foreground.g, s.foreground.b)
 }
 
+const MAX_LINE_WIDTH: usize = 500;
+
 pub fn highlight_code(code: &str, file_path: &str) -> Text<'static> {
     let syntax_set = get_syntax_set();
     let theme_set = get_theme_set();
@@ -85,7 +87,29 @@ pub fn highlight_code(code: &str, file_path: &str) -> Text<'static> {
             })
             .collect();
 
-        lines.push(Line::from(spans));
+        if spans.is_empty() {
+            lines.push(Line::from(""));
+        } else {
+            let total_len: usize = spans.iter().map(|s| s.content.len()).sum();
+            if total_len <= MAX_LINE_WIDTH {
+                lines.push(Line::from(spans));
+            } else {
+                let mut current_line: Vec<Span> = Vec::new();
+                let mut current_len = 0;
+                for span in spans {
+                    let span_len = span.content.len();
+                    if current_len + span_len > MAX_LINE_WIDTH && !current_line.is_empty() {
+                        lines.push(Line::from(std::mem::take(&mut current_line)));
+                        current_len = 0;
+                    }
+                    current_line.push(span);
+                    current_len += span_len;
+                }
+                if !current_line.is_empty() {
+                    lines.push(Line::from(current_line));
+                }
+            }
+        }
     }
 
     Text {
@@ -245,6 +269,28 @@ mod tests {
         let result = highlight_code(code, "test.txt");
 
         assert!(!result.lines.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_code_very_long_line() {
+        let long_line = format!(
+            "Project(\"{}\") = \"{}  ",
+            "{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}",
+            "TestProject".repeat(100)
+        );
+        assert!(long_line.len() > MAX_LINE_WIDTH);
+        let result = highlight_code(&long_line, "test.sln");
+
+        let total_chars: usize = result
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.len()).sum::<usize>())
+            .sum();
+        assert_eq!(total_chars, long_line.len());
+        for line in &result.lines {
+            let line_len: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            assert!(line_len <= MAX_LINE_WIDTH || result.lines.len() == 1);
+        }
     }
 
     #[test]
