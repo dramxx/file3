@@ -3,7 +3,7 @@ use ratatui::{
     prelude::Stylize,
     style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -38,6 +38,8 @@ pub fn render(app: &App, frame: &mut Frame) {
         .constraints([Constraint::Percentage(25), Constraint::Min(0)])
         .split(chunks[1]);
 
+    frame.render_widget(Clear, main_area[0]);
+    frame.render_widget(Clear, main_area[1]);
     render_left_panel(app, frame, main_area[0]);
     render_right_panel(app, frame, main_area[1]);
     render_status_bar(app, frame, chunks[2]);
