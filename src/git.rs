@@ -14,7 +14,7 @@ fn run_git_command_with_timeout(args: &[&str], path: &Path) -> Option<std::proce
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let _handle = std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let mut cmd = Command::new("git");
         cmd.args(&args)
             .current_dir(&path)
@@ -26,9 +26,15 @@ fn run_git_command_with_timeout(args: &[&str], path: &Path) -> Option<std::proce
     });
 
     match rx.recv_timeout(timeout) {
-        Ok(result) => result.ok(),
+        Ok(result) => {
+            let _ = handle.join();
+            result.ok()
+        }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = handle.join();
+            None
+        }
     }
 }
 
