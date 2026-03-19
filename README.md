@@ -37,6 +37,7 @@ cargo run
 **Git Integration** (when in a git repository)
 
 - Modified files marked with `●` in yellow
+- Press `f` to filter and show only files with uncommitted changes (flat list)
 - Press `d` to toggle between file content and git diff view
 - Diffs show additions in green, deletions in red, and hunk headers in cyan
 
@@ -56,6 +57,7 @@ cargo run
 | `..` + Enter   | Go up one directory                   |
 | `PageUp` / `u` | Scroll content up                     |
 | `PageDown`     | Scroll content down                   |
+| `f`            | Toggle dirty files filter (git repos only) |
 | `d`            | Toggle git diff view (git repos only) |
 
 ## Requirements

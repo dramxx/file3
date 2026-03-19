@@ -16,7 +16,6 @@ const SELECTION: Color = Color::Rgb(75, 75, 120);
 const TEXT: Color = Color::Rgb(220, 220, 240);
 const TEXT_DIM: Color = Color::Rgb(120, 120, 150);
 const ACCENT: Color = Color::Rgb(97, 175, 239);
-const DIR_COLOR: Color = Color::Rgb(229, 192, 109);
 const DIRTY_COLOR: Color = Color::Rgb(229, 192, 109);
 const BORDER: Color = Color::Rgb(60, 60, 80);
 
@@ -32,7 +31,7 @@ pub fn render(app: &App, frame: &mut Frame) {
         ])
         .split(area);
 
-    render_header(frame, chunks[0]);
+    render_header(app, frame, chunks[0]);
 
     let main_area = Layout::default()
         .direction(Direction::Horizontal)
@@ -44,12 +43,19 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_status_bar(app, frame, chunks[2]);
 }
 
-fn render_header(frame: &mut Frame, area: Rect) {
+fn render_header(app: &App, frame: &mut Frame, area: Rect) {
+    let mode_indicator = if app.show_dirty_only {
+        Span::styled(" [dirty]", Style::default().fg(DIRTY_COLOR))
+    } else {
+        Span::raw("")
+    };
+
     let paragraph = Paragraph::new(
         Line::from(vec![
             Span::raw("  "),
             Span::styled("file3", Style::default().fg(ACCENT).bold()),
             Span::raw("  ·  TUI File Explorer"),
+            mode_indicator,
         ])
         .style(Style::default().bg(PANEL_BG).fg(TEXT)),
     )
@@ -59,68 +65,106 @@ fn render_header(frame: &mut Frame, area: Rect) {
 }
 
 fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
-    let title = truncate(&app.current_dir.to_string_lossy(), area.width as usize - 4);
-
-    let mut items: Vec<ListItem> = Vec::new();
-
-    let not_at_root = !app.is_at_root();
-
-    if not_at_root {
-        let is_selected = app.selected == 0;
-        items.push(ListItem::new(
-            Line::from(vec![
-                Span::raw(" "),
-                Span::raw("◀").style(Style::default().fg(TEXT_DIM)),
-                Span::raw("  "),
-                Span::raw("..").style(Style::default().fg(TEXT_DIM)),
-            ])
-            .style(Style::default().bg(if is_selected {
-                SELECTION
-            } else {
-                PANEL_BG
-            })),
-        ));
-    }
-
-    items.extend(app.entries.iter().enumerate().map(|(i, entry)| {
-        let (icon, color) = if entry.is_dir {
-            ("▶", DIR_COLOR)
-        } else if app.is_dirty(&entry.path) {
-            ("●", DIRTY_COLOR)
-        } else {
-            (" ", TEXT_DIM)
-        };
-
-        let name_style = if entry.is_dir {
-            Style::default().fg(DIR_COLOR)
-        } else if app.is_dirty(&entry.path) {
-            Style::default().fg(TEXT)
-        } else {
-            Style::default().fg(TEXT_DIM)
-        };
-
-        let list_index = if not_at_root { i + 1 } else { i };
-        let is_selected = app.selected == list_index;
-
-        ListItem::new(
-            Line::from(vec![
-                Span::raw(" "),
-                Span::raw(icon).style(Style::default().fg(color)),
-                Span::raw(" "),
-                Span::raw(format!(
-                    "{}{}",
-                    entry.name,
-                    if entry.is_dir { "/" } else { "" }
-                ))
-                .style(name_style),
-            ])
-            .style(Style::default().bg(if is_selected {
-                SELECTION
-            } else {
-                PANEL_BG
-            })),
+    let title = if app.show_dirty_only {
+        format!(" {} dirty files ", app.dirty_entries.len())
+    } else {
+        format!(
+            " {} ",
+            truncate(&app.current_dir.to_string_lossy(), area.width as usize - 4)
         )
-    }));
+    };
+
+    let items: Vec<ListItem> =
+        if app.show_dirty_only {
+            if app.dirty_entries.is_empty() {
+                vec![ListItem::new(
+                    Line::from(vec![Span::raw("  No dirty files")])
+                        .style(Style::default().fg(TEXT_DIM)),
+                )]
+            } else {
+                app.dirty_entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, entry)| {
+                        let is_selected = app.selected == i;
+                        ListItem::new(
+                            Line::from(vec![
+                                Span::raw(" "),
+                                Span::raw("●").style(Style::default().fg(DIRTY_COLOR)),
+                                Span::raw("  "),
+                                Span::raw(&entry.name).style(Style::default().fg(TEXT)),
+                            ])
+                            .style(
+                                Style::default().bg(if is_selected { SELECTION } else { PANEL_BG }),
+                            ),
+                        )
+                    })
+                    .collect()
+            }
+        } else {
+            let mut items: Vec<ListItem> = Vec::new();
+            let not_at_root = !app.is_at_root();
+
+            if not_at_root {
+                let is_selected = app.selected == 0;
+                items.push(ListItem::new(
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::raw("◀").style(Style::default().fg(TEXT_DIM)),
+                        Span::raw("  "),
+                        Span::raw("..").style(Style::default().fg(TEXT_DIM)),
+                    ])
+                    .style(Style::default().bg(if is_selected {
+                        SELECTION
+                    } else {
+                        PANEL_BG
+                    })),
+                ));
+            }
+
+            items.extend(app.entries.iter().enumerate().map(|(i, entry)| {
+                let is_dirty = app.is_dirty(&entry.path);
+                let (icon, color) = if entry.is_dir {
+                    ("▶", Color::Rgb(229, 192, 109))
+                } else if is_dirty {
+                    ("●", DIRTY_COLOR)
+                } else {
+                    (" ", TEXT_DIM)
+                };
+
+                let name_style = if entry.is_dir {
+                    Style::default().fg(Color::Rgb(229, 192, 109))
+                } else if is_dirty {
+                    Style::default().fg(TEXT)
+                } else {
+                    Style::default().fg(TEXT_DIM)
+                };
+
+                let list_index = if not_at_root { i + 1 } else { i };
+                let is_selected = app.selected == list_index;
+
+                ListItem::new(
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::raw(icon).style(Style::default().fg(color)),
+                        Span::raw(" "),
+                        Span::raw(format!(
+                            "{}{}",
+                            entry.name,
+                            if entry.is_dir { "/" } else { "" }
+                        ))
+                        .style(name_style),
+                    ])
+                    .style(Style::default().bg(if is_selected {
+                        SELECTION
+                    } else {
+                        PANEL_BG
+                    })),
+                )
+            }));
+
+            items
+        };
 
     let mut list_state = ListState::default();
     list_state.select(Some(app.selected));
@@ -128,9 +172,13 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
     let list = List::new(items)
         .block(
             Block::bordered()
-                .title(format!(" {} ", title))
+                .title(title.as_str())
                 .border_style(Style::default().fg(BORDER))
-                .title_style(Style::default().fg(TEXT_DIM))
+                .title_style(Style::default().fg(if app.show_dirty_only {
+                    DIRTY_COLOR
+                } else {
+                    TEXT_DIM
+                }))
                 .borders(Borders::ALL),
         )
         .style(Style::default().bg(PANEL_BG));
@@ -139,7 +187,7 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
-    if app.selected_is_parent() {
+    if app.selected_is_parent() && !app.show_dirty_only {
         let content_block = Block::bordered()
             .title(" .. ")
             .border_style(Style::default().fg(BORDER))
@@ -150,6 +198,26 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
         frame.render_widget(
             Paragraph::new(
                 Line::from(Span::raw("  Go up one directory")).style(Style::default().fg(TEXT_DIM)),
+            )
+            .scroll((0, 0))
+            .block(content_block),
+            area,
+        );
+        return;
+    }
+
+    if app.show_dirty_only && app.dirty_entries.is_empty() {
+        let content_block = Block::bordered()
+            .title(" No dirty files ")
+            .border_style(Style::default().fg(BORDER))
+            .title_style(Style::default().fg(DIRTY_COLOR))
+            .borders(Borders::ALL)
+            .style(Style::default().bg(BG));
+
+        frame.render_widget(
+            Paragraph::new(
+                Line::from(Span::raw("  No files with uncommitted changes"))
+                    .style(Style::default().fg(TEXT_DIM)),
             )
             .scroll((0, 0))
             .block(content_block),
@@ -257,11 +325,14 @@ fn render_diff(diff: &str) -> Text<'static> {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let key_hints = if app.is_git_repo {
+    let key_hints: Vec<(&str, &str)> = if app.show_dirty_only {
+        vec![("q", "quit"), ("↑↓", "navigate"), ("f", "show all")]
+    } else if app.is_git_repo {
         vec![
             ("q", "quit"),
             ("↑↓", "navigate"),
             ("↵", "open"),
+            ("f", "dirty"),
             ("d", "diff"),
         ]
     } else {

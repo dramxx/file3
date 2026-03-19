@@ -23,6 +23,9 @@ pub struct App {
     pub dirty_files: HashSet<PathBuf>,
     pub view_mode: ViewMode,
     pub diff_content: Option<String>,
+
+    pub show_dirty_only: bool,
+    pub dirty_entries: Vec<DirEntry>,
 }
 
 impl App {
@@ -54,6 +57,8 @@ impl App {
             dirty_files,
             view_mode: ViewMode::Content,
             diff_content: None,
+            show_dirty_only: false,
+            dirty_entries: Vec::new(),
         }
     }
 
@@ -65,27 +70,52 @@ impl App {
     }
 
     pub fn move_down(&mut self) {
-        let total_items = self.entries.len() + if self.is_at_root() { 0 } else { 1 };
-        if self.selected < total_items - 1 {
+        let count = self.visible_entry_count();
+        if self.selected < count.saturating_sub(1) {
             self.selected += 1;
             self.load_selection();
         }
     }
 
-    pub fn enter(&mut self) {
-        if self.selected_is_parent() {
-            self.go_up();
-            return;
-        }
-
-        let entry_index = if self.is_at_root() {
-            self.selected
+    fn visible_entry_count(&self) -> usize {
+        if self.show_dirty_only {
+            self.dirty_entries.len()
         } else {
-            self.selected - 1
-        };
-        if let Some(entry) = self.entries.get(entry_index) {
-            if entry.is_dir {
-                self.current_dir = entry.path.clone();
+            self.entries.len() + if self.is_at_root() { 0 } else { 1 }
+        }
+    }
+
+    pub fn enter(&mut self) {
+        if !self.show_dirty_only {
+            if self.selected_is_parent() {
+                self.go_up();
+                return;
+            }
+
+            let entry_index = if self.is_at_root() {
+                self.selected
+            } else {
+                self.selected - 1
+            };
+            if let Some(entry) = self.entries.get(entry_index) {
+                if entry.is_dir {
+                    self.current_dir = entry.path.clone();
+                    self.entries = fs::read_dir(&self.current_dir);
+                    self.selected = 0;
+                    self.file_content = None;
+                    self.scroll = 0;
+                    self.view_mode = ViewMode::Content;
+                    self.diff_content = None;
+                    self.refresh_git_state();
+                }
+            }
+        }
+    }
+
+    pub fn go_up(&mut self) {
+        if !self.show_dirty_only {
+            if let Some(parent) = self.current_dir.parent() {
+                self.current_dir = parent.to_path_buf();
                 self.entries = fs::read_dir(&self.current_dir);
                 self.selected = 0;
                 self.file_content = None;
@@ -97,21 +127,8 @@ impl App {
         }
     }
 
-    pub fn go_up(&mut self) {
-        if let Some(parent) = self.current_dir.parent() {
-            self.current_dir = parent.to_path_buf();
-            self.entries = fs::read_dir(&self.current_dir);
-            self.selected = 0;
-            self.file_content = None;
-            self.scroll = 0;
-            self.view_mode = ViewMode::Content;
-            self.diff_content = None;
-            self.refresh_git_state();
-        }
-    }
-
     pub fn toggle_diff(&mut self) {
-        if !self.is_git_repo {
+        if !self.is_git_repo || self.show_dirty_only {
             return;
         }
 
@@ -137,6 +154,61 @@ impl App {
         }
     }
 
+    pub fn toggle_dirty_filter(&mut self) {
+        if !self.is_git_repo {
+            return;
+        }
+
+        self.show_dirty_only = !self.show_dirty_only;
+        self.selected = 0;
+        self.scroll = 0;
+        self.view_mode = ViewMode::Content;
+        self.diff_content = None;
+        self.file_content = None;
+
+        if self.show_dirty_only {
+            self.collect_dirty_files();
+            if let Some(entry) = self.dirty_entries.first() {
+                self.file_content = fs::read_file(&entry.path);
+            }
+        }
+    }
+
+    fn collect_dirty_files(&mut self) {
+        self.dirty_entries.clear();
+
+        if let Some(ref git_root) = self.git_root {
+            let git_root = git_root.clone();
+            let current_dir = self.current_dir.clone();
+            self.traverse_for_dirty(&current_dir, &git_root);
+            self.dirty_entries
+                .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        }
+    }
+
+    fn traverse_for_dirty(&mut self, dir: &PathBuf, git_root: &PathBuf) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                if path.is_dir() {
+                    self.traverse_for_dirty(&path, git_root);
+                } else if self.dirty_files.contains(&path) {
+                    self.dirty_entries.push(DirEntry {
+                        name,
+                        path: path.clone(),
+                        is_dir: false,
+                    });
+                }
+            }
+        }
+    }
+
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(3);
     }
@@ -155,6 +227,13 @@ impl App {
         self.scroll = 0;
         self.view_mode = ViewMode::Content;
         self.diff_content = None;
+
+        if self.show_dirty_only {
+            if let Some(entry) = self.dirty_entries.get(self.selected) {
+                self.file_content = fs::read_file(&entry.path);
+            }
+            return;
+        }
 
         if self.selected_is_parent() {
             self.file_content = None;
@@ -186,18 +265,26 @@ impl App {
             .as_ref()
             .map(|root| git::git_dirty_files(root))
             .unwrap_or_default();
+
+        if self.show_dirty_only {
+            self.collect_dirty_files();
+        }
     }
 
     pub fn selected_entry(&self) -> Option<&DirEntry> {
-        if self.selected_is_parent() {
-            None
+        if self.show_dirty_only {
+            self.dirty_entries.get(self.selected)
         } else {
-            let index = if self.is_at_root() {
-                self.selected
+            if self.selected_is_parent() {
+                None
             } else {
-                self.selected.saturating_sub(1)
-            };
-            self.entries.get(index)
+                let index = if self.is_at_root() {
+                    self.selected
+                } else {
+                    self.selected.saturating_sub(1)
+                };
+                self.entries.get(index)
+            }
         }
     }
 
