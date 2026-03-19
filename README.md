@@ -28,6 +28,7 @@ cargo run
 - Enter directories with `Enter`
 - Navigate up with `..` row or `Backspace`
 - Two-panel layout: file list on left, preview on right
+- Toggle hidden files with `h` key (hidden files start with `.`)
 
 **Syntax Highlighting**
 
@@ -59,6 +60,7 @@ cargo run
 | `PageDown`     | Scroll content down                   |
 | `f`            | Toggle dirty files filter (git repos only) |
 | `d`            | Toggle git diff view (git repos only) |
+| `h`            | Toggle hidden files visibility        |
 
 ## Requirements
 
@@ -71,4 +73,4 @@ cargo run
 - The app starts in your current working directory
 - Files larger than 1MB are not loaded to prevent memory issues
 - Binary files (images, PDFs, EXEs, etc.) show empty preview
-- Hidden files (starting with `.`) are hidden by default
+- Hidden files (starting with `.`) are hidden by default - press `h` to show them

@@ -44,6 +44,23 @@ mod tests {
     }
 
     #[test]
+    fn test_read_dir_with_hidden_shows_hidden() {
+        let temp = create_temp_dir();
+        std::fs::create_dir(temp.path().join(".hidden_dir")).unwrap();
+        std::fs::write(temp.path().join(".hidden_file"), "").unwrap();
+        std::fs::create_dir(temp.path().join("visible_dir")).unwrap();
+        std::fs::write(temp.path().join("visible_file"), "").unwrap();
+
+        let entries = read_dir_with_hidden(temp.path());
+        let names: Vec<_> = entries.iter().map(|e| e.name.clone()).collect();
+
+        assert!(names.contains(&".hidden_dir".to_string()));
+        assert!(names.contains(&".hidden_file".to_string()));
+        assert!(names.contains(&"visible_dir".to_string()));
+        assert!(names.contains(&"visible_file".to_string()));
+    }
+
+    #[test]
     fn test_read_dir_sorts_dirs_first() {
         let temp = create_temp_dir();
         std::fs::create_dir(temp.path().join("aaa_file")).unwrap(); // named like file but is dir
@@ -194,12 +211,20 @@ mod tests {
 }
 
 pub fn read_dir(path: &Path) -> Vec<DirEntry> {
+    read_dir_impl(path, false)
+}
+
+pub fn read_dir_with_hidden(path: &Path) -> Vec<DirEntry> {
+    read_dir_impl(path, true)
+}
+
+fn read_dir_impl(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
     let entries: Vec<DirEntry> = match fs::read_dir(path) {
         Ok(reader) => reader
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with('.') {
+                if !show_hidden && name.starts_with('.') {
                     return None;
                 }
                 let path = e.path();

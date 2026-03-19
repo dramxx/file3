@@ -89,8 +89,10 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
                     .enumerate()
                     .map(|(i, entry)| {
                         let is_selected = app.selected == i;
+                        let cursor = if is_selected { "▌" } else { " " };
                         ListItem::new(
                             Line::from(vec![
+                                Span::styled(cursor, Style::default().fg(ACCENT)),
                                 Span::raw(" "),
                                 Span::raw("●").style(Style::default().fg(DIRTY_COLOR)),
                                 Span::raw("  "),
@@ -109,8 +111,10 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
 
             if not_at_root {
                 let is_selected = app.selected == 0;
+                let cursor = if is_selected { "▌" } else { " " };
                 items.push(ListItem::new(
                     Line::from(vec![
+                        Span::styled(cursor, Style::default().fg(ACCENT)),
                         Span::raw(" "),
                         Span::raw("◀").style(Style::default().fg(TEXT_DIM)),
                         Span::raw("  "),
@@ -144,9 +148,11 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
 
                 let list_index = if not_at_root { i + 1 } else { i };
                 let is_selected = app.selected == list_index;
+                let cursor = if is_selected { "▌" } else { " " };
 
                 ListItem::new(
                     Line::from(vec![
+                        Span::styled(cursor, Style::default().fg(ACCENT)),
                         Span::raw(" "),
                         Span::raw(icon).style(Style::default().fg(color)),
                         Span::raw(" "),
@@ -364,22 +370,40 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
     let key_hints: Vec<(&str, &str)> = if app.show_dirty_only && app.is_git_repo {
         vec![
             ("q", "quit"),
-            ("↑↓", "navigate"),
+            ("↑↓/kj", "navigate"),
+            ("↵", "open"),
             ("f", "show all"),
             ("d", "diff"),
+            ("h", "hidden"),
+            ("PgUp/PgDn", "scroll"),
         ]
     } else if app.show_dirty_only {
-        vec![("q", "quit"), ("↑↓", "navigate"), ("f", "show all")]
+        vec![
+            ("q", "quit"),
+            ("↑↓/kj", "navigate"),
+            ("↵", "open"),
+            ("f", "show all"),
+            ("h", "hidden"),
+            ("PgUp/PgDn", "scroll"),
+        ]
     } else if app.is_git_repo {
         vec![
             ("q", "quit"),
-            ("↑↓", "navigate"),
+            ("↑↓/kj", "navigate"),
             ("↵", "open"),
             ("f", "dirty"),
             ("d", "diff"),
+            ("h", "hidden"),
+            ("PgUp/PgDn", "scroll"),
         ]
     } else {
-        vec![("q", "quit"), ("↑↓", "navigate"), ("↵", "open")]
+        vec![
+            ("q", "quit"),
+            ("↑↓/kj", "navigate"),
+            ("↵", "open"),
+            ("h", "hidden"),
+            ("PgUp/PgDn", "scroll"),
+        ]
     };
 
     let items: Vec<Span> = key_hints

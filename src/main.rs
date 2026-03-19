@@ -59,6 +59,7 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut app::
                 }
                 KeyCode::Char('f') | KeyCode::Char('F') => app.toggle_dirty_filter(),
                 KeyCode::Char('d') | KeyCode::Char('D') => app.toggle_diff(),
+                KeyCode::Char('h') | KeyCode::Char('H') => app.toggle_hidden(),
                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                 KeyCode::Enter => app.enter(),

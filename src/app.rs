@@ -26,11 +26,13 @@ pub struct App {
 
     pub show_dirty_only: bool,
     pub dirty_entries: Vec<DirEntry>,
+    pub show_hidden: bool,
 }
 
 impl App {
     pub fn new() -> Self {
         let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let show_hidden = false;
         let entries = fs::read_dir(&current_dir);
 
         let is_git_repo = git::is_git_repo(&current_dir);
@@ -59,6 +61,7 @@ impl App {
             diff_content: None,
             show_dirty_only: false,
             dirty_entries: Vec::new(),
+            show_hidden,
         }
     }
 
@@ -100,12 +103,7 @@ impl App {
             if let Some(entry) = self.entries.get(entry_index) {
                 if entry.is_dir {
                     self.current_dir = entry.path.clone();
-                    self.entries = fs::read_dir(&self.current_dir);
-                    self.selected = 0;
-                    self.file_content = None;
-                    self.scroll = 0;
-                    self.view_mode = ViewMode::Content;
-                    self.diff_content = None;
+                    self.refresh_entries();
                     self.refresh_git_state();
                 }
             }
@@ -116,12 +114,7 @@ impl App {
         if !self.show_dirty_only {
             if let Some(parent) = self.current_dir.parent() {
                 self.current_dir = parent.to_path_buf();
-                self.entries = fs::read_dir(&self.current_dir);
-                self.selected = 0;
-                self.file_content = None;
-                self.scroll = 0;
-                self.view_mode = ViewMode::Content;
-                self.diff_content = None;
+                self.refresh_entries();
                 self.refresh_git_state();
             }
         }
@@ -171,6 +164,22 @@ impl App {
             if let Some(entry) = self.dirty_entries.first() {
                 self.file_content = fs::read_file(&entry.path);
             }
+        }
+    }
+
+    pub fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.refresh_entries();
+    }
+
+    fn refresh_entries(&mut self) {
+        self.entries = if self.show_hidden {
+            fs::read_dir_with_hidden(&self.current_dir)
+        } else {
+            fs::read_dir(&self.current_dir)
+        };
+        if !self.show_dirty_only {
+            self.load_selection();
         }
     }
 
