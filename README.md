@@ -2,6 +2,8 @@
 
 A fast, terminal-based file explorer with syntax highlighting and git diff support.
 
+![alt text](image.png)
+
 ## Install
 
 ```bash
