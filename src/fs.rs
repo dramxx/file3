@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 const MAX_FILE_SIZE: u64 = 1_048_576;
@@ -248,11 +249,35 @@ fn entries_sorted(mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
 }
 
 pub fn read_file(path: &Path) -> Option<String> {
-    match fs::metadata(path) {
-        Ok(meta) if meta.len() > MAX_FILE_SIZE => return None,
-        Ok(_) => {}
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
         Err(_) => return None,
+    };
+
+    let metadata = match file.metadata() {
+        Ok(m) => m,
+        Err(_) => return None,
+    };
+
+    if metadata.len() > MAX_FILE_SIZE {
+        return None;
     }
 
-    fs::read_to_string(path).ok()
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = [0u8; 8192];
+    let bytes_read = match reader.read(&mut buffer) {
+        Ok(n) => n,
+        Err(_) => return None,
+    };
+
+    if buffer[..bytes_read].iter().any(|&b| b == 0) {
+        return None;
+    }
+
+    reader.seek(std::io::SeekFrom::Start(0)).ok()?;
+    let mut content = String::new();
+    match reader.read_to_string(&mut content) {
+        Ok(_) => Some(content),
+        Err(_) => None,
+    }
 }

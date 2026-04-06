@@ -103,6 +103,7 @@ impl App {
             if let Some(entry) = self.entries.get(entry_index) {
                 if entry.is_dir {
                     self.current_dir = entry.path.clone();
+                    self.selected = 0;
                     self.refresh_entries();
                     self.refresh_git_state();
                 }
@@ -111,12 +112,10 @@ impl App {
     }
 
     pub fn go_up(&mut self) {
-        if !self.show_dirty_only {
-            if let Some(parent) = self.current_dir.parent() {
-                self.current_dir = parent.to_path_buf();
-                self.refresh_entries();
-                self.refresh_git_state();
-            }
+        if let Some(parent) = self.current_dir.parent() {
+            self.current_dir = parent.to_path_buf();
+            self.refresh_entries();
+            self.refresh_git_state();
         }
     }
 
@@ -134,12 +133,10 @@ impl App {
             if self.view_mode == ViewMode::Content {
                 self.view_mode = ViewMode::Diff;
                 self.scroll = 0;
-                if self.diff_content.is_none() {
-                    self.diff_content = self
-                        .git_root
-                        .as_ref()
-                        .and_then(|root| git::git_diff(root, &entry.path));
-                }
+                self.diff_content = self
+                    .git_root
+                    .as_ref()
+                    .and_then(|root| git::git_diff(root, &entry.path));
             } else {
                 self.view_mode = ViewMode::Content;
                 self.diff_content = None;
@@ -170,6 +167,9 @@ impl App {
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
         self.refresh_entries();
+        if self.show_dirty_only {
+            self.collect_dirty_files();
+        }
     }
 
     fn refresh_entries(&mut self) {
@@ -193,6 +193,11 @@ impl App {
             self.dirty_entries
                 .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         }
+
+        if self.dirty_entries.is_empty() {
+            self.selected = 0;
+            self.file_content = None;
+        }
     }
 
     fn traverse_for_dirty(&mut self, dir: &PathBuf, git_root: &PathBuf) {
@@ -201,7 +206,7 @@ impl App {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().into_owned();
 
-                if name.starts_with('.') {
+                if name.starts_with('.') && !self.show_hidden {
                     continue;
                 }
 
@@ -264,16 +269,21 @@ impl App {
     }
 
     fn refresh_git_state(&mut self) {
+        let old_git_root = self.git_root.clone();
+
         self.is_git_repo = git::is_git_repo(&self.current_dir);
         self.git_root = self
             .is_git_repo
             .then(|| git::git_root(&self.current_dir))
             .flatten();
-        self.dirty_files = self
-            .git_root
-            .as_ref()
-            .map(|root| git::git_dirty_files(root))
-            .unwrap_or_default();
+
+        if self.git_root != old_git_root {
+            self.dirty_files = self
+                .git_root
+                .as_ref()
+                .map(|root| git::git_dirty_files(root))
+                .unwrap_or_default();
+        }
 
         if self.show_dirty_only {
             self.collect_dirty_files();
@@ -284,16 +294,15 @@ impl App {
         if self.show_dirty_only {
             self.dirty_entries.get(self.selected)
         } else {
-            if self.selected_is_parent() {
-                None
+            let index = if self.is_at_root() {
+                self.selected
             } else {
-                let index = if self.is_at_root() {
-                    self.selected
-                } else {
-                    self.selected.saturating_sub(1)
-                };
-                self.entries.get(index)
-            }
+                if self.selected == 0 {
+                    return None;
+                }
+                self.selected - 1
+            };
+            self.entries.get(index)
         }
     }
 
@@ -608,13 +617,10 @@ mod tests {
         std::fs::write(temp.path().join("test.txt"), "modified").unwrap();
 
         let mut app = App::new();
-
+        
         if let Some(entry) = app.entries.iter().find(|e| e.name == "test.txt") {
-            app.selected = app
-                .entries
-                .iter()
-                .position(|e| e.name == entry.name)
-                .unwrap_or(0);
+            let pos = app.entries.iter().position(|e| e.name == entry.name).unwrap_or(0);
+            app.selected = if app.is_at_root() { pos } else { pos + 1 };
             app.toggle_diff();
             assert_eq!(app.view_mode, ViewMode::Diff);
         }

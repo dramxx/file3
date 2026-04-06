@@ -14,7 +14,7 @@ fn run_git_command_with_timeout(args: &[&str], path: &Path) -> Option<std::proce
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let handle = std::thread::spawn(move || {
+    let handle: std::thread::JoinHandle<()> = std::thread::spawn(move || {
         let mut cmd = Command::new("git");
         cmd.args(&args)
             .current_dir(&path)
@@ -30,7 +30,13 @@ fn run_git_command_with_timeout(args: &[&str], path: &Path) -> Option<std::proce
             let _ = handle.join();
             result.ok()
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // Thread may still be running, but we can't easily kill it in Rust.
+            // The thread will terminate when the process exits or git times out internally.
+            // We still need to join to avoid undefined behavior.
+            let _ = handle.join();
+            None
+        }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             let _ = handle.join();
             None

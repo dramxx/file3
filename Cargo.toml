@@ -10,6 +10,7 @@ anyhow = "1"
 syntect = "5"
 thiserror = "2"
 bat = "0.24"
+pulldown-cmark = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

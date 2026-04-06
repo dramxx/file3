@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{App, ViewMode};
+use crate::markdown::{is_markdown_file, render_markdown};
 use crate::syntax::highlight_code;
 
 const BG: Color = Color::Rgb(30, 30, 46);
@@ -131,7 +132,7 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
             items.extend(app.entries.iter().enumerate().map(|(i, entry)| {
                 let is_dirty = app.is_dirty(&entry.path);
                 let (icon, color) = if entry.is_dir {
-                    ("▶", Color::Rgb(229, 192, 109))
+                    ("▶", DIRTY_COLOR)
                 } else if is_dirty {
                     ("●", DIRTY_COLOR)
                 } else {
@@ -139,7 +140,7 @@ fn render_left_panel(app: &App, frame: &mut Frame, area: Rect) {
                 };
 
                 let name_style = if entry.is_dir {
-                    Style::default().fg(Color::Rgb(229, 192, 109))
+                    Style::default().fg(DIRTY_COLOR)
                 } else if is_dirty {
                     Style::default().fg(TEXT)
                 } else {
@@ -290,7 +291,11 @@ fn render_right_panel(app: &App, frame: &mut Frame, area: Rect) {
         ViewMode::Content => {
             if let Some(ref content) = app.file_content {
                 if let Some(entry) = app.selected_entry() {
-                    Paragraph::new(highlight_code(content, &entry.name))
+                    if is_markdown_file(&entry.name) {
+                        Paragraph::new(render_markdown(content))
+                    } else {
+                        Paragraph::new(highlight_code(content, &entry.name))
+                    }
                 } else {
                     Paragraph::new(
                         wrap_text_at_width(content, wrap_width).style(Style::default().fg(TEXT)),

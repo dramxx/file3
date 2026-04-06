@@ -40,14 +40,6 @@ fn find_syntax<'a>(syntax_set: &'a SyntaxSet, path: &str) -> &'a syntect::parsin
         }
     }
 
-    if let Ok(content) = std::fs::read_to_string(path) {
-        if let Some(first_line) = content.lines().next() {
-            if let Some(syntax) = syntax_set.find_syntax_by_first_line(first_line) {
-                return syntax;
-            }
-        }
-    }
-
     syntax_set.find_syntax_plain_text()
 }
 

@@ -1,6 +1,7 @@
 mod app;
 mod fs;
 mod git;
+mod markdown;
 mod syntax;
 mod ui;
 
@@ -47,29 +48,36 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut app::
             continue;
         }
 
-        if let event::Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
+        match event::read()? {
+            event::Event::Key(key) => {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
+                        app.running = false;
+                        break;
+                    }
+                    KeyCode::Char('f') | KeyCode::Char('F') => app.toggle_dirty_filter(),
+                    KeyCode::Char('d') | KeyCode::Char('D') => app.toggle_diff(),
+                    KeyCode::Char('h') | KeyCode::Char('H') => app.toggle_hidden(),
+                    KeyCode::Up | KeyCode::Char('k') => app.move_up(),
+                    KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                    KeyCode::Enter => app.enter(),
+                    KeyCode::Backspace => app.go_up(),
+                    KeyCode::PageUp | KeyCode::Char('u') => app.scroll_up(),
+                    KeyCode::PageDown => {
+                        let height = terminal.size()?.height;
+                        app.scroll_down(height);
+                    }
+                    _ => {}
+                }
+            }
+            event::Event::Resize(_, _) => {
                 continue;
             }
-
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    app.running = false;
-                    break;
-                }
-                KeyCode::Char('f') | KeyCode::Char('F') => app.toggle_dirty_filter(),
-                KeyCode::Char('d') | KeyCode::Char('D') => app.toggle_diff(),
-                KeyCode::Char('h') | KeyCode::Char('H') => app.toggle_hidden(),
-                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                KeyCode::Enter => app.enter(),
-                KeyCode::PageUp | KeyCode::Char('u') => app.scroll_up(),
-                KeyCode::PageDown => {
-                    let height = terminal.size()?.height;
-                    app.scroll_down(height);
-                }
-                _ => {}
-            }
+            _ => {}
         }
 
         if !app.running {
