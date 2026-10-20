@@ -1322,4 +1322,100 @@ mod tests {
             }
         }
     }
+
+    /// Writes `docs/screenshot.svg` from a real render of this repository.
+    /// Run with `cargo test write_screenshot -- --ignored`.
+    #[test]
+    #[ignore]
+    fn write_screenshot() {
+        let root = std::env::current_dir().unwrap();
+        let mut app = App::with_root(root.clone());
+        settle(&mut app);
+        app.tree.reveal(&root.join("src").join("viewer.rs"));
+        let path = root.join("src").join("viewer.rs");
+        app.viewer.open(&path);
+        app.focus = crate::app::Focus::Viewer;
+        // Show a find in progress for some highlighted matches.
+        press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+        for c in "scroll".chars() {
+            press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+        let (w, h) = (128u16, 36u16);
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| render(&mut app, f)).unwrap();
+        app.viewer.find_next(true);
+        terminal.draw(|f| render(&mut app, f)).unwrap();
+        let svg = buffer_to_svg(terminal.backend().buffer());
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("docs").join("screenshot.svg"), svg).unwrap();
+    }
+
+    fn rgb(color: Color, fallback: Color) -> String {
+        match color {
+            Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+            Color::Reset => rgb(fallback, Color::Black),
+            other => format!("{}", other).to_lowercase(),
+        }
+    }
+
+    fn escape(s: &str) -> String {
+        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    }
+
+    /// Draws terminal cells as an SVG: a rectangle per background run and a text element per
+    /// run of equally styled characters, stretched to the exact cell grid.
+    fn buffer_to_svg(buf: &ratatui::buffer::Buffer) -> String {
+        use ratatui::style::Modifier;
+        let (cw, ch) = (9.0, 19.0);
+        let area = buf.area;
+        let mut out = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\n\
+             <rect width=\"100%\" height=\"100%\" rx=\"8\" fill=\"{bg}\"/>\n\
+             <g font-family=\"Cascadia Mono, Consolas, 'DejaVu Sans Mono', Menlo, monospace\" font-size=\"15\">\n",
+            w = area.width as f64 * cw,
+            h = area.height as f64 * ch,
+            bg = rgb(t().editor_bg, t().editor_bg),
+        );
+        for y in 0..area.height {
+            let mut x = 0;
+            while x < area.width {
+                let cell = &buf[(x, y)];
+                let key = (cell.fg, cell.bg, cell.modifier);
+                let start = x;
+                let mut text = String::new();
+                while x < area.width {
+                    let c = &buf[(x, y)];
+                    if (c.fg, c.bg, c.modifier) != key {
+                        break;
+                    }
+                    text.push_str(c.symbol());
+                    x += 1;
+                }
+                let (px, py, run) = (start as f64 * cw, y as f64 * ch, (x - start) as f64 * cw);
+                out.push_str(&format!(
+                    "<rect x=\"{px}\" y=\"{py}\" width=\"{run}\" height=\"{ch}\" fill=\"{}\"/>\n",
+                    rgb(key.1, t().editor_bg)
+                ));
+                if !text.trim().is_empty() {
+                    let mut attrs = String::new();
+                    if key.2.contains(Modifier::BOLD) {
+                        attrs.push_str(" font-weight=\"bold\"");
+                    }
+                    if key.2.contains(Modifier::ITALIC) {
+                        attrs.push_str(" font-style=\"italic\"");
+                    }
+                    out.push_str(&format!(
+                        "<text x=\"{px}\" y=\"{}\" textLength=\"{run}\" lengthAdjust=\"spacingAndGlyphs\" xml:space=\"preserve\" fill=\"{}\"{attrs}>{}</text>\n",
+                        py + ch * 0.75,
+                        rgb(key.0, t().text),
+                        escape(&text)
+                    ));
+                }
+            }
+        }
+        out.push_str("</g>\n</svg>\n");
+        out
+    }
 }
