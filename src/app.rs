@@ -8,6 +8,7 @@ use ratatui::layout::{Position, Rect};
 
 use crate::config::{Config, ProjectState};
 use crate::finder::{self, Finder};
+use crate::font;
 use crate::palette::{Command, Palette, PaletteMode};
 use crate::theme;
 use crate::fs::DirEntry;
@@ -45,6 +46,18 @@ pub enum Overlay {
     Symbols(SymbolPicker),
     GotoLine(String),
     Help,
+    FontSetup(FontSetup),
+}
+
+/// Steps of the guided font setup, shown when icons are turned on without a Nerd Font.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FontSetup {
+    /// Offer to install the bundled font.
+    Install,
+    /// Offer to make it the font of this Windows Terminal (its settings file).
+    Terminal(PathBuf),
+    /// The outcome, closed with any key.
+    Done(String),
 }
 
 /// Screen areas from the last render, used to map mouse clicks.
@@ -481,6 +494,45 @@ impl App {
         self.nerd_font = !self.nerd_font;
         self.config.nerd_font = self.nerd_font;
         self.save_config();
+        if self.nerd_font && self.persist && !font::is_installed() {
+            self.overlay = Overlay::FontSetup(FontSetup::Install);
+        }
+    }
+
+    /// Installs the bundled font; the next step offers to set it in Windows Terminal.
+    fn install_font() -> FontSetup {
+        match font::install() {
+            Err(e) => FontSetup::Done(format!("Couldn't install the font: {}", e)),
+            Ok(()) => match font::windows_terminal_settings() {
+                Some(path) => FontSetup::Terminal(path),
+                None => FontSetup::Done(Self::font_hint()),
+            },
+        }
+    }
+
+    fn font_hint() -> String {
+        format!(
+            "Font installed. Set your terminal font to {} and restart the terminal to see the icons.",
+            font::FACE
+        )
+    }
+
+    fn handle_font_setup_key(&mut self, step: FontSetup, key: KeyEvent) {
+        let yes = matches!(key.code, KeyCode::Char('y') | KeyCode::Enter);
+        let no = matches!(key.code, KeyCode::Char('n') | KeyCode::Esc);
+        self.overlay = match step {
+            FontSetup::Install if yes => Overlay::FontSetup(Self::install_font()),
+            FontSetup::Terminal(path) if yes => Overlay::FontSetup(FontSetup::Done(
+                match font::set_windows_terminal_font(&path) {
+                    Ok(()) => "Done. Restart Windows Terminal to see the icons.".to_string(),
+                    Err(e) => format!("Couldn't change the settings ({}). {}", e, Self::font_hint()),
+                },
+            )),
+            FontSetup::Terminal(_) if no => Overlay::FontSetup(FontSetup::Done(Self::font_hint())),
+            FontSetup::Install if no => Overlay::None,
+            FontSetup::Done(_) => Overlay::None,
+            step => Overlay::FontSetup(step),
+        };
     }
 
     fn toggle_wrap(&mut self) {
@@ -970,6 +1022,11 @@ impl App {
                 self.overlay = Overlay::None;
                 true
             }
+            Overlay::FontSetup(step) => {
+                let step = step.clone();
+                self.handle_font_setup_key(step, key);
+                true
+            }
             Overlay::GotoLine(input) => {
                 match key.code {
                     KeyCode::Char(c) if c.is_ascii_digit() => input.push(c),
@@ -1248,7 +1305,7 @@ impl App {
                 }
                 return;
             }
-            Overlay::GotoLine(_) | Overlay::Help => {
+            Overlay::GotoLine(_) | Overlay::Help | Overlay::FontSetup(_) => {
                 self.overlay = Overlay::None;
                 return;
             }
@@ -1488,6 +1545,23 @@ mod tests {
         assert_eq!(app.side_mode, SideMode::Tree);
         assert_eq!(app.tree.rows.len(), 2);
         assert!(app.viewer.message.as_deref().unwrap().starts_with("src/"));
+    }
+
+    #[test]
+    fn test_font_setup_steps() {
+        let (_t, mut app) = project();
+        app.overlay = Overlay::FontSetup(FontSetup::Install);
+        app.handle_key(key(KeyCode::Char('x')));
+        assert!(matches!(app.overlay, Overlay::FontSetup(FontSetup::Install)));
+        app.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(app.overlay, Overlay::None));
+
+        app.overlay = Overlay::FontSetup(FontSetup::Terminal(PathBuf::from("settings.json")));
+        app.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(&app.overlay, Overlay::FontSetup(FontSetup::Done(m)) if m.contains(font::FACE)));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.overlay, Overlay::None));
+        assert!(app.running);
     }
 
     #[test]

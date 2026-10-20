@@ -84,8 +84,11 @@ editor = "code --goto {file}:{line}"
 
 ## Tips
 
-- **File icons** need a [Nerd Font](https://www.nerdfonts.com/) as the terminal font; turn them on
-  with `i`.
+- **File icons** need a [Nerd Font](https://www.nerdfonts.com/) as the terminal font. file3 comes
+  with one (CaskaydiaCove NFM): press `i`, and if the font is missing file3 offers to install it
+  and, in Windows Terminal, to make it the terminal font. Restart the terminal afterwards.
+  `file3 --install-font` installs it without the prompts. The font is under the SIL Open Font
+  License, see [assets/font/LICENSE](assets/font/LICENSE).
 - **Selecting text with the mouse:** hold `Shift` while dragging.
 - **Windows Terminal** keeps `Ctrl+Shift+F` and `Ctrl+Shift+P` for itself; use `Ctrl+F` and `F1`.
 - The screenshot is generated from a real render: `cargo test write_screenshot -- --ignored`.

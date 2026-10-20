@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod finder;
+mod font;
 mod fs;
 mod git;
 mod icons;
@@ -44,6 +45,17 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--install-font") {
+        if !font::is_installed() {
+            font::install()?;
+        }
+        println!(
+            "Installed {}. Set it as your terminal font, restart the terminal, then press i in file3.",
+            font::FACE
+        );
+        return Ok(());
+    }
+
     enable_raw_mode()?;
     let _guard = TerminalGuard;
 

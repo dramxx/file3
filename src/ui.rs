@@ -6,12 +6,12 @@ use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
     },
     Frame,
 };
 
-use crate::app::{App, Focus, Overlay, SideMode};
+use crate::app::{App, FontSetup, Focus, Overlay, SideMode};
 use crate::palette::PaletteMode;
 use crate::finder::Finder;
 use crate::icons;
@@ -72,6 +72,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             render_goto_line(app, frame, area, &input)
         }
         Overlay::Help => render_help(app, frame, area),
+        Overlay::FontSetup(step) => {
+            let step = step.clone();
+            render_font_setup(app, frame, area, &step)
+        }
     }
 }
 
@@ -255,7 +259,10 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
             PaletteMode::Themes { .. } => vec![("↑↓", "preview"), ("↵", "keep"), ("Esc", "cancel")],
         },
         (Overlay::GotoLine(_), _, _) => vec![("↵", "go"), ("Esc", "cancel")],
-        (Overlay::Help, _, _) => vec![("any key", "close")],
+        (Overlay::Help, _, _) | (Overlay::FontSetup(FontSetup::Done(_)), _, _) => {
+            vec![("any key", "close")]
+        }
+        (Overlay::FontSetup(_), _, _) => vec![("y", "yes"), ("n", "no")],
         _ if app.viewer.find.as_ref().is_some_and(|f| f.editing) => {
             vec![("↵", "done"), ("↑↓", "prev/next"), ("Esc", "cancel")]
         }
@@ -1088,6 +1095,37 @@ fn render_goto_line(app: &mut App, frame: &mut Frame, area: Rect, input: &str) {
     app.areas.popup_list = Rect::default();
 }
 
+fn render_font_setup(app: &mut App, frame: &mut Frame, area: Rect, step: &FontSetup) {
+    let text = match step {
+        FontSetup::Install => format!(
+            "File icons need a Nerd Font as your terminal font. file3 comes with one ({}). \
+             Install it for your user?   y / n",
+            crate::font::FACE
+        ),
+        FontSetup::Terminal(_) => "Font installed. Make it the Windows Terminal font? \
+             Your settings are backed up to settings.json.bak first.   y / n"
+            .to_string(),
+        FontSetup::Done(message) => message.clone(),
+    };
+    let popup = centered(area, 64, 6);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t().border_focus))
+        .title(panel_title("File Icons", true))
+        .style(Style::default().bg(t().popup_bg));
+    let inner = block.inner(popup).inner(Margin::new(1, 0));
+    frame.render_widget(block, popup);
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(t().text_bright))
+            .wrap(Wrap { trim: true }),
+        inner,
+    );
+    app.areas.popup = popup;
+    app.areas.popup_list = Rect::default();
+}
+
 type HelpSection = (&'static str, &'static [(&'static str, &'static str)]);
 
 const HELP_LEFT: &[HelpSection] = &[
@@ -1309,6 +1347,10 @@ mod tests {
             press(&mut app, KeyCode::Down, KeyModifiers::NONE);
             shots.push(("theme picker", draw(&mut app, w, h)));
             press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+            app.overlay = Overlay::FontSetup(FontSetup::Install);
+            shots.push(("font setup", draw(&mut app, w, h)));
+            app.overlay = Overlay::None;
 
             if app.is_git_repo() {
                 press(&mut app, KeyCode::Char('f'), KeyModifiers::NONE);
