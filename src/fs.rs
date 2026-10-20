@@ -1,6 +1,9 @@
+use std::collections::HashSet;
 use std::fs;
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+use ignore::WalkBuilder;
 
 const MAX_FILE_SIZE: u64 = 1_048_576;
 
@@ -9,234 +12,59 @@ pub struct DirEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    /// Excluded by `.gitignore` (or the `.git` folder); only listed when showing everything.
+    pub ignored: bool,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn create_temp_dir() -> TempDir {
-        tempfile::tempdir().unwrap()
-    }
-
-    #[test]
-    fn test_read_dir_empty() {
-        let temp = create_temp_dir();
-        let entries = read_dir(temp.path());
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn test_read_dir_filters_hidden() {
-        let temp = create_temp_dir();
-        std::fs::create_dir(temp.path().join(".hidden_dir")).unwrap();
-        std::fs::write(temp.path().join(".hidden_file"), "").unwrap();
-        std::fs::create_dir(temp.path().join("visible_dir")).unwrap();
-        std::fs::write(temp.path().join("visible_file"), "").unwrap();
-
-        let entries = read_dir(temp.path());
-        let names: Vec<_> = entries.iter().map(|e| e.name.clone()).collect();
-
-        assert!(!names.contains(&".hidden_dir".to_string()));
-        assert!(!names.contains(&".hidden_file".to_string()));
-        assert!(names.contains(&"visible_dir".to_string()));
-        assert!(names.contains(&"visible_file".to_string()));
-    }
-
-    #[test]
-    fn test_read_dir_with_hidden_shows_hidden() {
-        let temp = create_temp_dir();
-        std::fs::create_dir(temp.path().join(".hidden_dir")).unwrap();
-        std::fs::write(temp.path().join(".hidden_file"), "").unwrap();
-        std::fs::create_dir(temp.path().join("visible_dir")).unwrap();
-        std::fs::write(temp.path().join("visible_file"), "").unwrap();
-
-        let entries = read_dir_with_hidden(temp.path());
-        let names: Vec<_> = entries.iter().map(|e| e.name.clone()).collect();
-
-        assert!(names.contains(&".hidden_dir".to_string()));
-        assert!(names.contains(&".hidden_file".to_string()));
-        assert!(names.contains(&"visible_dir".to_string()));
-        assert!(names.contains(&"visible_file".to_string()));
-    }
-
-    #[test]
-    fn test_read_dir_sorts_dirs_first() {
-        let temp = create_temp_dir();
-        std::fs::create_dir(temp.path().join("aaa_file")).unwrap(); // named like file but is dir
-        std::fs::write(temp.path().join("zzz_dir"), "").unwrap(); // named like dir but is file
-
-        let entries = read_dir(temp.path());
-        assert!(entries[0].is_dir);
-        assert!(!entries[1].is_dir);
-    }
-
-    #[test]
-    fn test_read_dir_sorts_case_insensitive() {
-        let temp = create_temp_dir();
-        std::fs::create_dir(temp.path().join("Apple")).unwrap();
-        std::fs::create_dir(temp.path().join("banana")).unwrap();
-        std::fs::create_dir(temp.path().join("Cherry")).unwrap();
-
-        let entries = read_dir(temp.path());
-        let names: Vec<_> = entries.iter().map(|e| e.name.clone()).collect();
-
-        assert_eq!(names[0], "Apple");
-        assert_eq!(names[1], "banana");
-        assert_eq!(names[2], "Cherry");
-    }
-
-    #[test]
-    fn test_read_dir_nonexistent_path() {
-        let entries = read_dir(Path::new("/nonexistent/path/12345"));
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn test_read_file_basic() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("test.txt");
-        std::fs::write(&file_path, "Hello, World!").unwrap();
-
-        let content = read_file(&file_path);
-        assert_eq!(content, Some("Hello, World!".to_string()));
-    }
-
-    #[test]
-    fn test_read_file_nonexistent() {
-        let result = read_file(Path::new("/nonexistent/file.txt"));
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_read_file_too_large() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("large.txt");
-        let large_content = "x".repeat(MAX_FILE_SIZE as usize + 1);
-        std::fs::write(&file_path, large_content).unwrap();
-
-        let result = read_file(&file_path);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_read_file_exactly_max_size() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("exact.txt");
-        let content = "x".repeat(MAX_FILE_SIZE as usize);
-        std::fs::write(&file_path, &content).unwrap();
-
-        let result = read_file(&file_path);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().len(), MAX_FILE_SIZE as usize);
-    }
-
-    #[test]
-    fn test_read_file_binary_content() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("binary.bin");
-        let content = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello" in ASCII
-        std::fs::write(&file_path, &content).unwrap();
-
-        let result = read_file(&file_path);
-        assert!(result.is_some());
-        let content_str = result.unwrap();
-        assert_eq!(content_str, "Hello");
-    }
-
-    #[test]
-    fn test_read_file_unicode() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("unicode.txt");
-        std::fs::write(&file_path, "Hello 世界 🌍 Привет").unwrap();
-
-        let content = read_file(&file_path);
-        assert!(content.is_some());
-        assert!(content.unwrap().contains("世界"));
-    }
-
-    #[test]
-    fn test_read_file_empty() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("empty.txt");
-        std::fs::write(&file_path, "").unwrap();
-
-        let content = read_file(&file_path);
-        assert_eq!(content, Some("".to_string()));
-    }
-
-    #[test]
-    fn test_read_file_trailing_newlines() {
-        let temp = create_temp_dir();
-        let file_path = temp.path().join("newlines.txt");
-        std::fs::write(&file_path, "Line 1\nLine 2\nLine 3\n").unwrap();
-
-        let content = read_file(&file_path).unwrap();
-        assert_eq!(content.lines().count(), 3);
-    }
-
-    #[test]
-    fn test_dir_entry_clone() {
-        let entry = DirEntry {
-            name: "test".to_string(),
-            path: PathBuf::from("/test/path"),
-            is_dir: true,
-        };
-        let cloned = entry.clone();
-        assert_eq!(entry, cloned);
-    }
-
-    #[test]
-    fn test_entries_sorted_with_files_and_dirs() {
-        let temp = create_temp_dir();
-        std::fs::create_dir(temp.path().join("docs")).unwrap();
-        std::fs::create_dir(temp.path().join("src")).unwrap();
-        std::fs::write(temp.path().join("README.md"), "").unwrap();
-        std::fs::write(temp.path().join("main.rs"), "").unwrap();
-
-        let entries = read_dir(temp.path());
-
-        let dirs: Vec<_> = entries.iter().filter(|e| e.is_dir).collect();
-        let files: Vec<_> = entries.iter().filter(|e| !e.is_dir).collect();
-
-        for dir in &dirs {
-            for file in &files {
-                assert!(
-                    entries.iter().position(|e| e.name == dir.name)
-                        < entries.iter().position(|e| e.name == file.name)
-                );
-            }
-        }
-    }
+#[derive(Debug, PartialEq)]
+pub enum FileLoad {
+    Text(String),
+    Binary,
+    TooLarge(u64),
+    Error(String),
 }
 
-pub fn read_dir(path: &Path) -> Vec<DirEntry> {
-    read_dir_impl(path, false)
-}
-
-pub fn read_dir_with_hidden(path: &Path) -> Vec<DirEntry> {
-    read_dir_impl(path, true)
-}
-
-fn read_dir_impl(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
-    let entries: Vec<DirEntry> = match fs::read_dir(path) {
-        Ok(reader) => reader
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if !show_hidden && name.starts_with('.') {
-                    return None;
-                }
-                let path = e.path();
-                let is_dir = path.is_dir();
-                Some(DirEntry { name, path, is_dir })
-            })
-            .collect(),
-        Err(_) => Vec::new(),
+/// Lists one directory level. Without `show_all`, gitignored entries and `.git` are left out.
+pub fn list_dir(path: &Path, show_all: bool) -> Vec<DirEntry> {
+    let visible: HashSet<PathBuf> = walk_level(path, true).into_iter().collect();
+    let paths = if show_all {
+        walk_level(path, false)
+    } else {
+        visible.iter().cloned().collect()
     };
 
+    let entries = paths
+        .into_iter()
+        .map(|path| DirEntry {
+            name: path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            is_dir: path.is_dir(),
+            ignored: !visible.contains(&path),
+            path,
+        })
+        .collect();
+
     entries_sorted(entries)
+}
+
+fn walk_level(path: &Path, filtered: bool) -> Vec<PathBuf> {
+    WalkBuilder::new(path)
+        .max_depth(Some(1))
+        .hidden(false)
+        .require_git(false)
+        .git_ignore(filtered)
+        .git_exclude(filtered)
+        .git_global(filtered)
+        .ignore(filtered)
+        .parents(filtered)
+        .build()
+        .filter_map(Result::ok)
+        .filter(|e| e.depth() == 1)
+        .filter(|e| !filtered || e.file_name() != ".git")
+        .map(|e| e.into_path())
+        .collect()
 }
 
 fn entries_sorted(mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
@@ -248,36 +76,209 @@ fn entries_sorted(mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
     entries
 }
 
-pub fn read_file(path: &Path) -> Option<String> {
-    let file = match fs::File::open(path) {
+pub fn load_file(path: &Path) -> FileLoad {
+    let mut file = match fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return None,
+        Err(e) => return FileLoad::Error(e.to_string()),
     };
 
-    let metadata = match file.metadata() {
-        Ok(m) => m,
-        Err(_) => return None,
+    let len = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => return FileLoad::Error(e.to_string()),
     };
 
-    if metadata.len() > MAX_FILE_SIZE {
-        return None;
+    if len > MAX_FILE_SIZE {
+        return FileLoad::TooLarge(len);
     }
 
-    let mut reader = std::io::BufReader::new(file);
-    let mut buffer = [0u8; 8192];
-    let bytes_read = match reader.read(&mut buffer) {
-        Ok(n) => n,
-        Err(_) => return None,
-    };
-
-    if buffer[..bytes_read].iter().any(|&b| b == 0) {
-        return None;
+    let mut bytes = Vec::with_capacity(len as usize);
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return FileLoad::Error(e.to_string());
     }
 
-    reader.seek(std::io::SeekFrom::Start(0)).ok()?;
-    let mut content = String::new();
-    match reader.read_to_string(&mut content) {
-        Ok(_) => Some(content),
-        Err(_) => None,
+    if bytes[..bytes.len().min(8192)].contains(&0) {
+        return FileLoad::Binary;
+    }
+
+    FileLoad::Text(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_temp_dir() -> TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    fn names(entries: &[DirEntry]) -> Vec<String> {
+        entries.iter().map(|e| e.name.clone()).collect()
+    }
+
+    #[test]
+    fn test_list_dir_empty() {
+        let temp = create_temp_dir();
+        assert!(list_dir(temp.path(), false).is_empty());
+    }
+
+    #[test]
+    fn test_list_dir_shows_dotfiles_but_not_git_folder() {
+        let temp = create_temp_dir();
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        std::fs::create_dir(temp.path().join(".github")).unwrap();
+        std::fs::write(temp.path().join(".env"), "").unwrap();
+
+        let names = names(&list_dir(temp.path(), false));
+        assert!(!names.contains(&".git".to_string()));
+        assert!(names.contains(&".github".to_string()));
+        assert!(names.contains(&".env".to_string()));
+    }
+
+    #[test]
+    fn test_list_dir_respects_gitignore() {
+        let temp = create_temp_dir();
+        std::fs::write(temp.path().join(".gitignore"), "target/\n*.log\n").unwrap();
+        std::fs::create_dir(temp.path().join("target")).unwrap();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("debug.log"), "").unwrap();
+
+        let names = names(&list_dir(temp.path(), false));
+        assert!(names.contains(&"src".to_string()));
+        assert!(!names.contains(&"target".to_string()));
+        assert!(!names.contains(&"debug.log".to_string()));
+    }
+
+    #[test]
+    fn test_list_dir_respects_parent_gitignore() {
+        let temp = create_temp_dir();
+        std::fs::write(temp.path().join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir(temp.path().join("sub")).unwrap();
+        std::fs::write(temp.path().join("sub").join("a.log"), "").unwrap();
+        std::fs::write(temp.path().join("sub").join("a.txt"), "").unwrap();
+
+        let names = names(&list_dir(&temp.path().join("sub"), false));
+        assert_eq!(names, vec!["a.txt".to_string()]);
+    }
+
+    #[test]
+    fn test_list_dir_show_all_marks_ignored() {
+        let temp = create_temp_dir();
+        std::fs::write(temp.path().join(".gitignore"), "target/\n").unwrap();
+        std::fs::create_dir(temp.path().join("target")).unwrap();
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+
+        let entries = list_dir(temp.path(), true);
+        let find = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        assert!(find("target").ignored);
+        assert!(find(".git").ignored);
+        assert!(!find("src").ignored);
+    }
+
+    #[test]
+    fn test_list_dir_sorts_dirs_first() {
+        let temp = create_temp_dir();
+        std::fs::create_dir(temp.path().join("zzz_dir")).unwrap();
+        std::fs::write(temp.path().join("aaa_file"), "").unwrap();
+
+        let entries = list_dir(temp.path(), false);
+        assert!(entries[0].is_dir);
+        assert!(!entries[1].is_dir);
+    }
+
+    #[test]
+    fn test_list_dir_sorts_case_insensitive() {
+        let temp = create_temp_dir();
+        std::fs::create_dir(temp.path().join("Apple")).unwrap();
+        std::fs::create_dir(temp.path().join("banana")).unwrap();
+        std::fs::create_dir(temp.path().join("Cherry")).unwrap();
+
+        assert_eq!(
+            names(&list_dir(temp.path(), false)),
+            vec!["Apple", "banana", "Cherry"]
+        );
+    }
+
+    #[test]
+    fn test_list_dir_nonexistent_path() {
+        assert!(list_dir(Path::new("/nonexistent/path/12345"), false).is_empty());
+    }
+
+    #[test]
+    fn test_load_file_basic() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("test.txt");
+        std::fs::write(&file_path, "Hello, World!").unwrap();
+
+        assert_eq!(load_file(&file_path), FileLoad::Text("Hello, World!".to_string()));
+    }
+
+    #[test]
+    fn test_load_file_nonexistent() {
+        assert!(matches!(
+            load_file(Path::new("/nonexistent/file.txt")),
+            FileLoad::Error(_)
+        ));
+    }
+
+    #[test]
+    fn test_load_file_too_large() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("large.txt");
+        std::fs::write(&file_path, "x".repeat(MAX_FILE_SIZE as usize + 1)).unwrap();
+
+        assert_eq!(load_file(&file_path), FileLoad::TooLarge(MAX_FILE_SIZE + 1));
+    }
+
+    #[test]
+    fn test_load_file_exactly_max_size() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("exact.txt");
+        std::fs::write(&file_path, "x".repeat(MAX_FILE_SIZE as usize)).unwrap();
+
+        match load_file(&file_path) {
+            FileLoad::Text(s) => assert_eq!(s.len(), MAX_FILE_SIZE as usize),
+            other => panic!("unexpected {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_load_file_binary() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("binary.bin");
+        std::fs::write(&file_path, [0x48, 0x00, 0x6c]).unwrap();
+
+        assert_eq!(load_file(&file_path), FileLoad::Binary);
+    }
+
+    #[test]
+    fn test_load_file_invalid_utf8_is_lossy() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("latin1.txt");
+        std::fs::write(&file_path, [b'a', 0xE9, b'b']).unwrap();
+
+        assert_eq!(load_file(&file_path), FileLoad::Text("a\u{FFFD}b".to_string()));
+    }
+
+    #[test]
+    fn test_load_file_unicode() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("unicode.txt");
+        std::fs::write(&file_path, "Hello 世界 🌍 Привет").unwrap();
+
+        match load_file(&file_path) {
+            FileLoad::Text(s) => assert!(s.contains("世界")),
+            other => panic!("unexpected {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_load_file_empty() {
+        let temp = create_temp_dir();
+        let file_path = temp.path().join("empty.txt");
+        std::fs::write(&file_path, "").unwrap();
+
+        assert_eq!(load_file(&file_path), FileLoad::Text(String::new()));
     }
 }

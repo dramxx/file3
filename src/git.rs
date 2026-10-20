@@ -44,6 +44,59 @@ fn run_git_command_with_timeout(args: &[&str], path: &Path) -> Option<std::proce
     }
 }
 
+pub fn is_git_repo(path: &Path) -> bool {
+    run_git_command_with_timeout(&["rev-parse", "--is-inside-work-tree"], path)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub fn git_root(path: &Path) -> Option<PathBuf> {
+    let output = run_git_command_with_timeout(&["rev-parse", "--show-toplevel"], path)?;
+
+    if output.status.success() {
+        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if root.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(root))
+        }
+    } else {
+        None
+    }
+}
+
+pub fn git_dirty_files(repo_root: &Path) -> HashSet<PathBuf> {
+    let output = match run_git_command_with_timeout(&["diff", "HEAD", "--name-only"], repo_root) {
+        Some(o) => o,
+        None => return HashSet::new(),
+    };
+
+    if !output.status.success() {
+        return HashSet::new();
+    }
+
+    let root = repo_root.to_path_buf();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| root.join(line.trim()))
+        .collect()
+}
+
+pub fn git_diff(repo_root: &Path, file_path: &Path) -> Option<String> {
+    let relative = file_path.strip_prefix(repo_root).ok()?;
+    let relative_str = relative.to_str()?;
+    let output = run_git_command_with_timeout(&["diff", "HEAD", "--", relative_str], repo_root)?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).ok()
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,58 +335,5 @@ mod tests {
         assert_eq!(dirty.len(), 2);
         assert!(dirty.contains(&temp.path().join("a.txt")));
         assert!(dirty.contains(&temp.path().join("b.txt")));
-    }
-}
-
-pub fn is_git_repo(path: &Path) -> bool {
-    run_git_command_with_timeout(&["rev-parse", "--is-inside-work-tree"], path)
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-pub fn git_root(path: &Path) -> Option<PathBuf> {
-    let output = run_git_command_with_timeout(&["rev-parse", "--show-toplevel"], path)?;
-
-    if output.status.success() {
-        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if root.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(root))
-        }
-    } else {
-        None
-    }
-}
-
-pub fn git_dirty_files(repo_root: &Path) -> HashSet<PathBuf> {
-    let output = match run_git_command_with_timeout(&["diff", "HEAD", "--name-only"], repo_root) {
-        Some(o) => o,
-        None => return HashSet::new(),
-    };
-
-    if !output.status.success() {
-        return HashSet::new();
-    }
-
-    let root = repo_root.to_path_buf();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    stdout
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| root.join(line.trim()))
-        .collect()
-}
-
-pub fn git_diff(repo_root: &Path, file_path: &Path) -> Option<String> {
-    let relative = file_path.strip_prefix(repo_root).ok()?;
-    let relative_str = relative.to_str()?;
-    let output = run_git_command_with_timeout(&["diff", "HEAD", "--", relative_str], repo_root)?;
-
-    if output.status.success() {
-        String::from_utf8(output.stdout).ok()
-    } else {
-        None
     }
 }
