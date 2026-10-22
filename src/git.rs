@@ -67,17 +67,18 @@ pub fn git_root(path: &Path) -> Option<PathBuf> {
 
 /// Files changed vs HEAD, plus untracked files that aren't ignored.
 pub fn git_dirty_files(repo_root: &Path) -> HashSet<PathBuf> {
-    let changed = &["diff", "HEAD", "--name-only"][..];
-    let untracked = &["ls-files", "--others", "--exclude-standard"][..];
+    // -z: NUL-separated, unquoted paths (git quotes non-ASCII names otherwise).
+    let changed = &["diff", "HEAD", "--name-only", "-z"][..];
+    let untracked = &["ls-files", "--others", "--exclude-standard", "-z"][..];
     [changed, untracked]
         .into_iter()
         .filter_map(|args| run_git_command_with_timeout(args, repo_root))
         .filter(|output| output.status.success())
         .flat_map(|output| {
             String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(|line| repo_root.join(line.trim()))
+                .split('\0')
+                .filter(|name| !name.is_empty())
+                .map(|name| repo_root.join(name))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -217,6 +218,17 @@ mod tests {
 
         let dirty = git_dirty_files(temp.path());
         assert!(dirty.contains(&temp.path().join("untracked.txt")));
+    }
+
+    #[test]
+    fn test_git_dirty_files_non_ascii_name() {
+        let temp = create_temp_dir();
+        create_git_repo(&temp);
+
+        std::fs::write(temp.path().join("ñ 世界.md"), "content").unwrap();
+
+        let dirty = git_dirty_files(temp.path());
+        assert!(dirty.contains(&temp.path().join("ñ 世界.md")));
     }
 
     #[test]

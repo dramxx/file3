@@ -236,10 +236,16 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
     // Long breadcrumbs lose their middle parts first.
     let width = area.width as usize;
     let right_w: usize = right.iter().map(|s| str_width(&s.content)).sum();
-    while left.len() > 5 && left.iter().map(|s| str_width(&s.content)).sum::<usize>() + right_w > width {
-        left.remove(3);
-        left.remove(3);
-        if left.get(3).is_none_or(|s| s.content != "…") {
+    while left.iter().map(|s| str_width(&s.content)).sum::<usize>() + right_w > width {
+        // Once collapsed the row reads: root › … › part › … › file.
+        let collapsed = left.get(4).is_some_and(|s| s.content == "…");
+        let first = if collapsed { 5 } else { 3 };
+        // Always keep the file name.
+        if left.len() < first + 4 {
+            break;
+        }
+        left.drain(first..first + 2);
+        if !collapsed {
             left.insert(3, sep.clone());
             left.insert(4, Span::styled("…", Style::default().fg(t().text_faint)));
         }
@@ -1284,6 +1290,22 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         app.tick();
+    }
+
+    #[test]
+    fn test_deep_path_header_fits_narrow_width() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("aaaa").join("bbbb").join("cccc").join("dddd");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("file.rs"), "fn a() {}
+").unwrap();
+        let mut app = App::with_root(temp.path().to_path_buf());
+        settle(&mut app);
+        app.viewer.open(&dir.join("file.rs"));
+        for width in [20, 40, 60] {
+            let screen = draw(&mut app, width, 10);
+            assert!(screen.lines().next().unwrap().contains("file.rs"), "{}", screen);
+        }
     }
 
     /// Renders every screen of the app on this repository at a narrow and a wide size.
