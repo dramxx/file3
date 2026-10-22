@@ -65,23 +65,21 @@ pub fn git_root(path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Files changed vs HEAD, plus untracked files that aren't ignored.
 pub fn git_dirty_files(repo_root: &Path) -> HashSet<PathBuf> {
-    let output = match run_git_command_with_timeout(&["diff", "HEAD", "--name-only"], repo_root) {
-        Some(o) => o,
-        None => return HashSet::new(),
-    };
-
-    if !output.status.success() {
-        return HashSet::new();
-    }
-
-    let root = repo_root.to_path_buf();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    stdout
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| root.join(line.trim()))
+    let changed = &["diff", "HEAD", "--name-only"][..];
+    let untracked = &["ls-files", "--others", "--exclude-standard"][..];
+    [changed, untracked]
+        .into_iter()
+        .filter_map(|args| run_git_command_with_timeout(args, repo_root))
+        .filter(|output| output.status.success())
+        .flat_map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| repo_root.join(line.trim()))
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -94,11 +92,25 @@ pub fn git_diff(repo_root: &Path, file_path: &Path) -> Option<String> {
         repo_root,
     )?;
 
-    if output.status.success() {
-        String::from_utf8(output.stdout).ok()
-    } else {
-        None
+    if !output.status.success() {
+        return None;
     }
+    if !output.stdout.is_empty() || !is_untracked(repo_root, relative_str) {
+        return String::from_utf8(output.stdout).ok();
+    }
+
+    // An untracked file: diff it against nothing, so it shows as all added.
+    let output = run_git_command_with_timeout(
+        &["diff", "--no-index", "--no-color", "--unified=100000000", "--", "/dev/null", relative_str],
+        repo_root,
+    )?;
+    // --no-index exits with 1 when the files differ.
+    String::from_utf8(output.stdout).ok()
+}
+
+fn is_untracked(repo_root: &Path, relative: &str) -> bool {
+    run_git_command_with_timeout(&["ls-files", "--others", "--exclude-standard", "--", relative], repo_root)
+        .is_some_and(|o| o.status.success() && !o.stdout.is_empty())
 }
 
 #[cfg(test)]
@@ -204,7 +216,25 @@ mod tests {
         std::fs::write(temp.path().join("untracked.txt"), "content").unwrap();
 
         let dirty = git_dirty_files(temp.path());
-        assert!(dirty.is_empty()); // Untracked files don't show in diff HEAD
+        assert!(dirty.contains(&temp.path().join("untracked.txt")));
+    }
+
+    #[test]
+    fn test_git_diff_untracked_file_is_all_added() {
+        let temp = create_temp_dir();
+        create_git_repo(&temp);
+        std::fs::write(temp.path().join("old.txt"), "old").unwrap();
+        std::process::Command::new("git").args(["add", "."]).current_dir(temp.path()).output().unwrap();
+        std::process::Command::new("git").args(["commit", "-m", "initial"]).current_dir(temp.path()).output().unwrap();
+
+        std::fs::write(temp.path().join("new.txt"), "one
+two
+").unwrap();
+
+        let diff = git_diff(temp.path(), &temp.path().join("new.txt")).unwrap();
+        assert!(diff.contains("+one
++two
+"));
     }
 
     #[test]
