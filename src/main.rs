@@ -24,7 +24,9 @@ use crossterm::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         KeyEventKind,
     },
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::stdout;
@@ -64,6 +66,12 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut app = app::App::new();
+
+    let folder = app.root.file_name().map_or_else(
+        || app.root.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    crossterm::execute!(stdout(), SetTitle(format!("file3 : {folder}")))?;
 
     let result = run(&mut terminal, &mut app);
     app.save_state();
