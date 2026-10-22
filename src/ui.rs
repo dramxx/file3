@@ -22,7 +22,7 @@ use crate::text::{
     wrap_line,
 };
 use crate::theme::{self, Theme};
-use crate::viewer::{ViewMode, Viewer};
+use crate::viewer::{Change, ViewMode, Viewer};
 
 fn t() -> &'static Theme {
     theme::current()
@@ -275,7 +275,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
             ("Esc", "close"),
         ],
         (_, Focus::Side, SideMode::Changes) => {
-            vec![("↵", "open"), ("d", "diff"), ("f", "tree"), ("^P", "files"), ("^F", "search"), ("?", "help")]
+            vec![("↵", "open"), ("f", "tree"), ("^P", "files"), ("^F", "search"), ("?", "help")]
         }
         (_, Focus::Side, SideMode::Tree) => {
             let mut h = vec![("^P", "files"), ("^F", "search"), ("↵", "open"), ("←→", "fold"), ("h", "hidden")];
@@ -286,7 +286,8 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
             h
         }
         (_, Focus::Viewer, _) => {
-            let mut h = vec![("/", "find"), ("n/N", "next"), ("^G", "line"), ("w", "wrap")];
+            let next = if app.viewer.mode == ViewMode::Diff && app.viewer.find.is_none() { "change" } else { "next" };
+            let mut h = vec![("/", "find"), ("n/N", next), ("^G", "line"), ("w", "wrap")];
             if app.viewer.is_markdown() {
                 h.push(("m", "markdown"));
             }
@@ -691,7 +692,8 @@ fn render_viewer(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let v = &mut app.viewer;
     let gutter = if v.numbered && !v.lines.is_empty() {
-        v.lines.len().to_string().len() + 3
+        // Diffs add a column for the +/- sign.
+        v.lines.len().to_string().len() + if v.mode == ViewMode::Diff { 4 } else { 3 }
     } else {
         1
     };
@@ -763,19 +765,33 @@ fn render_text(v: &Viewer, frame: &mut Frame, area: Rect, gutter: usize) {
             if y >= area.height as usize {
                 break;
             }
+            let change = v.diff.get(index).filter(|_| v.mode == ViewMode::Diff);
             let number = if !v.numbered {
                 " ".to_string()
-            } else if p == 0 {
-                format!(" {:>w$}  ", index + 1, w = gutter - 3)
-            } else {
+            } else if p > 0 {
                 " ".repeat(gutter)
+            } else if let Some(&(change, line)) = change {
+                let sign = match change {
+                    Change::Same => ' ',
+                    Change::Added => '+',
+                    Change::Removed => '-',
+                };
+                let line = line.map(|n| n.to_string()).unwrap_or_default();
+                format!(" {:>w$} {} ", line, sign, w = gutter - 4)
+            } else {
+                format!(" {:>w$}  ", index + 1, w = gutter - 3)
             };
-            let number_color = if marked { t().text_bright } else { t().text_faint };
+            let (number_color, bg) = match change.map(|c| c.0) {
+                _ if marked => (t().text_bright, Some(t().current_line_bg)),
+                Some(Change::Added) => (t().added, Some(t().added_bg)),
+                Some(Change::Removed) => (t().removed, Some(t().removed_bg)),
+                _ => (t().text_faint, None),
+            };
             let mut spans = vec![Span::styled(number, Style::default().fg(number_color))];
             spans.extend(piece.spans);
             let mut row = Line::from(spans);
-            if marked {
-                row = row.style(Style::default().bg(t().current_line_bg));
+            if let Some(bg) = bg {
+                row = row.style(Style::default().bg(bg));
             }
             frame.render_widget(row, row_rect(area, y));
             y += 1;
@@ -1163,7 +1179,7 @@ const HELP_RIGHT: &[HelpSection] = &[
             ("← →", "scroll sideways"),
             ("w", "wrap long lines"),
             ("m", "markdown source"),
-            ("d", "diff vs HEAD (git)"),
+            ("d", "changes inline (git)"),
             ("y  Y", "copy path (+ line)"),
             ("e", "open in editor"),
             ("Esc", "clear / back"),

@@ -386,7 +386,9 @@ impl App {
 
     fn preview_change(&mut self) {
         if let Some(entry) = self.changes.entries.get(self.changes.selected).cloned() {
-            self.preview_entry(&entry);
+            if self.viewer.path.as_deref() != Some(entry.path.as_path()) || self.viewer.mode != ViewMode::Diff {
+                self.show_diff(&entry.path);
+            }
         } else {
             self.viewer.show_message("No uncommitted changes");
         }
@@ -568,10 +570,16 @@ impl App {
 
     /// Re-runs the diff of the open file, keeping the scroll position.
     fn restyle_diff(&mut self) {
-        if let (Some(git_root), Some(path)) = (self.git_root.clone(), self.viewer.path.clone()) {
+        if let Some(path) = self.viewer.path.clone() {
             let scroll = self.viewer.scroll;
-            self.viewer.show_diff(git::git_diff(&git_root, &path));
+            self.show_diff(&path);
             self.viewer.scroll = scroll.min(self.viewer.max_scroll());
+        }
+    }
+
+    fn show_diff(&mut self, path: &Path) {
+        if let Some(git_root) = &self.git_root {
+            self.viewer.show_diff(path, git::git_diff(git_root, path));
         }
     }
 
@@ -728,11 +736,10 @@ impl App {
 
     fn toggle_diff(&mut self) {
         let Some(path) = self.viewer.path.clone() else { return };
-        let Some(git_root) = self.git_root.clone() else { return };
         if self.viewer.mode == ViewMode::Diff {
             self.viewer.show_content();
         } else {
-            self.viewer.show_diff(git::git_diff(&git_root, &path));
+            self.show_diff(&path);
         }
     }
 
@@ -979,6 +986,8 @@ impl App {
             KeyCode::Left => v.hscroll_by(-4),
             KeyCode::Right | KeyCode::Char('l') => v.hscroll_by(4),
             KeyCode::Char('/') => v.start_find(),
+            KeyCode::Char('n') if v.find.is_none() && v.mode == ViewMode::Diff => v.next_change(true),
+            KeyCode::Char('N') if v.find.is_none() && v.mode == ViewMode::Diff => v.next_change(false),
             KeyCode::Char('n') => v.find_next(true),
             KeyCode::Char('N') => v.find_next(false),
             KeyCode::Esc => {
@@ -1943,10 +1952,13 @@ mod tests {
         app.handle_key(key(KeyCode::Char('f')));
         assert_eq!(app.side_mode, SideMode::Changes);
         assert_eq!(app.changes.entries[0].name, "src/main.rs");
-        assert_eq!(app.viewer.lines, vec!["changed"]);
+        // The changes list shows the file with its changes inline.
+        assert_eq!(app.viewer.mode, ViewMode::Diff);
+        assert_eq!(app.viewer.lines, vec!["fn main() {}", "// TODO later", "changed"]);
+        assert_eq!(app.viewer.diff_stats(), (1, 2));
 
         app.handle_key(key(KeyCode::Char('d')));
-        assert_eq!(app.viewer.mode, ViewMode::Diff);
-        assert_eq!(app.viewer.diff_stats(), (1, 2));
+        assert_eq!(app.viewer.mode, ViewMode::Content);
+        assert_eq!(app.viewer.lines, vec!["changed"]);
     }
 }

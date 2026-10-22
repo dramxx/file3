@@ -85,10 +85,14 @@ pub fn git_dirty_files(repo_root: &Path) -> HashSet<PathBuf> {
         .collect()
 }
 
+/// Diff of a file vs HEAD, with the whole file as context.
 pub fn git_diff(repo_root: &Path, file_path: &Path) -> Option<String> {
     let relative = file_path.strip_prefix(repo_root).ok()?;
     let relative_str = relative.to_str()?;
-    let output = run_git_command_with_timeout(&["diff", "HEAD", "--", relative_str], repo_root)?;
+    let output = run_git_command_with_timeout(
+        &["diff", "HEAD", "--no-color", "--unified=100000000", "--", relative_str],
+        repo_root,
+    )?;
 
     if output.status.success() {
         String::from_utf8(output.stdout).ok()

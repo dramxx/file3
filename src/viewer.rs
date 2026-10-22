@@ -15,10 +15,20 @@ use crate::theme;
 /// until that finishes only the first lines are colored.
 const SYNC_HIGHLIGHT_LINES: usize = 400;
 
+/// Unchanged lines kept above a change when jumping to it.
+const CHANGE_CONTEXT: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewMode {
     Content,
     Diff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Change {
+    Same,
+    Added,
+    Removed,
 }
 
 /// In-file search started with `/`.
@@ -44,9 +54,11 @@ pub struct Viewer {
     /// Plain text of each displayed line, tabs expanded.
     pub lines: Vec<String>,
     pub styled: Vec<Line<'static>>,
-    /// Show line numbers (off for rendered markdown and diffs).
+    /// Show line numbers (off for rendered markdown).
     pub numbered: bool,
     pub mode: ViewMode,
+    /// In diff mode, each line's change and its line number in the new file.
+    pub diff: Vec<(Change, Option<usize>)>,
     pub markdown_source: bool,
     pub scroll: usize,
     pub hscroll: usize,
@@ -57,8 +69,8 @@ pub struct Viewer {
     pub height: usize,
     pub width: usize,
     longest: usize,
-    /// Background highlighting of a long file: (file, theme index, result).
-    highlight_rx: Option<(PathBuf, usize, Receiver<Vec<Line<'static>>>)>,
+    /// Background highlighting of a long file: (file, mode, theme index, result).
+    highlight_rx: Option<(PathBuf, ViewMode, usize, Receiver<Vec<Line<'static>>>)>,
 }
 
 impl Viewer {
@@ -70,6 +82,7 @@ impl Viewer {
             styled: Vec::new(),
             numbered: true,
             mode: ViewMode::Content,
+            diff: Vec::new(),
             markdown_source: false,
             scroll: 0,
             hscroll: 0,
@@ -141,10 +154,10 @@ impl Viewer {
 
     /// Swaps in the background highlighting once it is done. Returns true when it did.
     pub fn poll_highlight(&mut self) -> bool {
-        let Some((path, theme_index, rx)) = &self.highlight_rx else { return false };
+        let Some((path, mode, theme_index, rx)) = &self.highlight_rx else { return false };
         let Ok(styled) = rx.try_recv() else { return false };
         let current = self.path.as_ref() == Some(path)
-            && self.mode == ViewMode::Content
+            && self.mode == *mode
             && *theme_index == theme::current_index();
         self.highlight_rx = None;
         if current && styled.len() == self.lines.len() {
@@ -179,7 +192,7 @@ impl Viewer {
                         std::thread::spawn(move || {
                             let _ = tx.send(highlight_code(&all, &name).lines);
                         });
-                        self.highlight_rx = Some((path.clone(), theme::current_index(), rx));
+                        self.highlight_rx = Some((path.clone(), ViewMode::Content, theme::current_index(), rx));
                         styled
                     };
                     self.set_lines(lines, styled, true);
@@ -218,25 +231,60 @@ impl Viewer {
         }
     }
 
-    pub fn show_diff(&mut self, diff: Option<String>) {
+    /// Shows the whole file with the changes vs HEAD inline, scrolled to the first change.
+    pub fn show_diff(&mut self, path: &Path, diff: Option<String>) {
+        self.path = Some(path.to_path_buf());
         self.mode = ViewMode::Diff;
+        self.markdown_source = false;
         self.scroll = 0;
         self.hscroll = 0;
         self.mark = None;
         self.message = None;
-        match diff.filter(|d| !d.trim().is_empty()) {
-            Some(diff) => {
-                let lines: Vec<String> = diff.lines().map(expand_tabs).collect();
-                let styled = lines
-                    .iter()
-                    .map(|l| Line::styled(l.clone(), diff_style(l)))
-                    .collect();
-                self.set_lines(lines, styled, false);
-            }
-            None => {
-                self.set_lines(Vec::new(), Vec::new(), false);
-                self.message = Some("No changes vs HEAD".to_string());
-            }
+        self.highlight_rx = None;
+        let (lines, diff) = parse_diff(diff.as_deref().unwrap_or(""));
+        self.diff = diff;
+        if lines.is_empty() {
+            self.set_lines(Vec::new(), Vec::new(), true);
+            self.message = Some("No changes vs HEAD".to_string());
+            return;
+        }
+        let name = path.to_string_lossy().into_owned();
+        let styled = if lines.len() <= SYNC_HIGHLIGHT_LINES {
+            highlight_diff(&lines, &self.diff, &name)
+        } else {
+            let (tx, rx) = mpsc::channel();
+            let (all, changes) = (lines.clone(), self.diff.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(highlight_diff(&all, &changes, &name));
+            });
+            self.highlight_rx = Some((path.to_path_buf(), ViewMode::Diff, theme::current_index(), rx));
+            lines.iter().map(|l| Line::from(l.clone())).collect()
+        };
+        self.set_lines(lines, styled, true);
+        if let Some(&first) = self.change_starts().first() {
+            self.scroll = first.saturating_sub(CHANGE_CONTEXT).min(self.max_scroll());
+        }
+    }
+
+    /// First line of each block of changed lines.
+    fn change_starts(&self) -> Vec<usize> {
+        (0..self.diff.len())
+            .filter(|&i| self.diff[i].0 != Change::Same && (i == 0 || self.diff[i - 1].0 == Change::Same))
+            .collect()
+    }
+
+    /// Scrolls to the next (or previous) block of changed lines.
+    pub fn next_change(&mut self, forward: bool) {
+        let starts = self.change_starts();
+        // A block jumped to sits CHANGE_CONTEXT lines below the top.
+        let anchor = self.scroll + CHANGE_CONTEXT;
+        let target = if forward {
+            starts.into_iter().find(|&i| i > anchor)
+        } else {
+            starts.into_iter().rev().find(|&i| i < anchor)
+        };
+        if let Some(i) = target {
+            self.scroll = i.saturating_sub(CHANGE_CONTEXT).min(self.max_scroll());
         }
     }
 
@@ -259,17 +307,8 @@ impl Viewer {
     }
 
     pub fn diff_stats(&self) -> (usize, usize) {
-        let added = self
-            .lines
-            .iter()
-            .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
-            .count();
-        let removed = self
-            .lines
-            .iter()
-            .filter(|l| l.starts_with('-') && !l.starts_with("---"))
-            .count();
-        (added, removed)
+        let count = |change| self.diff.iter().filter(|d| d.0 == change).count();
+        (count(Change::Added), count(Change::Removed))
     }
 
     // ---- scrolling ----
@@ -464,19 +503,65 @@ fn smart_case_regex(query: &str) -> Option<Regex> {
         .ok()
 }
 
-fn diff_style(line: &str) -> Style {
-    let fg = if line.starts_with("@@") {
-        theme::current().hunk
-    } else if line.starts_with('+') {
-        theme::current().added
-    } else if line.starts_with('-') {
-        theme::current().removed
-    } else if line.starts_with("diff ") || line.starts_with("index ") {
-        theme::current().text_faint
-    } else {
-        theme::current().text_dim
+/// Splits a unified diff into plain lines and, for each, its change and new-file line number.
+fn parse_diff(diff: &str) -> (Vec<String>, Vec<(Change, Option<usize>)>) {
+    let mut lines = Vec::new();
+    let mut changes = Vec::new();
+    // Next line number in the new file, once inside a hunk.
+    let mut next: Option<usize> = None;
+    for line in diff.lines() {
+        if line.starts_with("@@") {
+            next = line
+                .split(' ')
+                .find_map(|w| w.strip_prefix('+'))
+                .and_then(|w| w.split(',').next()?.parse().ok());
+            continue;
+        }
+        let Some(n) = next.as_mut() else { continue };
+        let change = match line.as_bytes().first() {
+            Some(b'+') => Change::Added,
+            Some(b'-') => Change::Removed,
+            Some(b' ') | None => Change::Same,
+            _ => continue, // "\ No newline at end of file"
+        };
+        let number = (change != Change::Removed).then(|| {
+            *n += 1;
+            *n - 1
+        });
+        lines.push(expand_tabs(line.get(1..).unwrap_or("")));
+        changes.push((change, number));
+    }
+    (lines, changes)
+}
+
+/// Highlights the new and the old version of the file and takes each line from the one it belongs to.
+fn highlight_diff(lines: &[String], changes: &[(Change, Option<usize>)], name: &str) -> Vec<Line<'static>> {
+    let version = |skip: Change| {
+        let text: Vec<&str> = lines
+            .iter()
+            .zip(changes)
+            .filter(|(_, c)| c.0 != skip)
+            .map(|(l, _)| l.as_str())
+            .collect();
+        highlight_code(&text.join("\n"), name).lines.into_iter()
     };
-    Style::default().fg(fg)
+    let mut new = version(Change::Removed);
+    let mut old = version(Change::Added);
+    lines
+        .iter()
+        .zip(changes)
+        .map(|(line, c)| {
+            let styled = match c.0 {
+                Change::Same => {
+                    old.next();
+                    new.next()
+                }
+                Change::Added => new.next(),
+                Change::Removed => old.next(),
+            };
+            styled.unwrap_or_else(|| Line::from(line.clone()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -626,9 +711,43 @@ mod tests {
     #[test]
     fn test_diff_view() {
         let mut v = Viewer::new();
-        v.show_diff(Some("@@ -1 +1 @@\n-old\n+new\n+more\n".to_string()));
+        let path = Path::new("a.txt");
+        v.show_diff(path, Some("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n keep\n-old\n+new\n+more\n\\ No newline at end of file\n".to_string()));
         assert_eq!(v.diff_stats(), (2, 1));
-        v.show_diff(None);
+        assert_eq!(v.lines, vec!["keep", "old", "new", "more"]);
+        assert_eq!(
+            v.diff,
+            vec![
+                (Change::Same, Some(1)),
+                (Change::Removed, None),
+                (Change::Added, Some(2)),
+                (Change::Added, Some(3)),
+            ]
+        );
+        v.show_diff(path, None);
         assert_eq!(v.message.as_deref(), Some("No changes vs HEAD"));
+    }
+
+    #[test]
+    fn test_next_change_jumps_between_blocks() {
+        let mut v = Viewer::new();
+        v.height = 5;
+        let mut diff = "@@ -1,40 +1,40 @@\n".to_string();
+        for i in 1..=40 {
+            if i == 10 || i == 30 {
+                diff.push_str(&format!("-line {i}\n+LINE {i}\n"));
+            } else {
+                diff.push_str(&format!(" line {i}\n"));
+            }
+        }
+        v.show_diff(Path::new("a.txt"), Some(diff));
+        // Opens on the first change, a few lines below the top.
+        assert_eq!(v.scroll, 9 - CHANGE_CONTEXT);
+        v.next_change(true);
+        assert_eq!(v.scroll, 30 - CHANGE_CONTEXT);
+        v.next_change(true);
+        assert_eq!(v.scroll, 30 - CHANGE_CONTEXT);
+        v.next_change(false);
+        assert_eq!(v.scroll, 9 - CHANGE_CONTEXT);
     }
 }
